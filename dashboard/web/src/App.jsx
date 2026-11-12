@@ -593,6 +593,74 @@ function StepTracker({ steps, copy = STEP_COPY }) {
   );
 }
 
+
+/* ------------------------------------------------------------------ agent identity */
+function AgentCard({ agent, error, onRefresh, loading }) {
+  const ok = agent?.verified;
+  const rows = [
+    ["Registry checks", agent ? `${agent.checks_passed} of ${agent.checks_total} passed` : "…", agent?.badge_valid],
+    ["Agent Card hash", agent ? (agent.hash_match ? `Matches chain · ${agent.card_hash.slice(0, 8)}` : "Does not match") : "…", agent?.hash_match],
+    ["On-chain status", agent?.status || "…", agent?.status === "Active"],
+  ];
+  return (
+    <section data-agent="card" className="card overflow-hidden rounded-3xl">
+      <div className={`relative px-5 pb-4 pt-5 ${ok ? "bg-gradient-to-br from-emerald-500/15 via-transparent to-transparent" : agent ? "bg-gradient-to-br from-rose-500/15 via-transparent to-transparent" : ""}`}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3 min-w-0">
+            <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ring-1 ${ok ? "bg-emerald-500 text-white ring-emerald-400/40 shadow-[0_0_24px_-4px_rgba(16,185,129,.8)]" : "bg-white/[.06] text-zinc-300 ring-white/10"}`}>
+              <Bot className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold uppercase tracking-[.14em] text-zinc-500">Agent</div>
+              <h2 className="mt-0.5 text-[15.5px] font-semibold tracking-tight text-white">{agent?.name || "ClientScope Work Agent"}</h2>
+              <div className="mt-0.5 text-[12.5px] text-zinc-400">Agent #{agent?.token_id || "1010"} · v{agent?.version || "1.0.0"} · CIS-8004</div>
+            </div>
+          </div>
+          <button type="button" onClick={onRefresh} title="Check again now" className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-white/5 hover:text-zinc-300">
+            {loading ? <Spin c="h-4 w-4" /> : <RotateCw className="h-4 w-4" />}
+          </button>
+        </div>
+        <div className={`mt-4 flex items-center gap-3 rounded-2xl px-3.5 py-3 ring-1 ${ok ? "bg-emerald-500/15 text-emerald-100 ring-emerald-400/25" : agent ? "bg-rose-500/15 text-rose-100 ring-rose-400/25" : "bg-white/[.04] text-zinc-400 ring-white/10"}`}>
+          {agent ? (ok ? <ShieldCheck className="h-6 w-6 shrink-0 text-emerald-300" /> : <ShieldX className="h-6 w-6 shrink-0 text-rose-300" />) : <Spin c="h-5 w-5" />}
+          <div className="min-w-0">
+            <div className="text-[13.5px] font-semibold text-white">{agent ? (ok ? "Verified by Concordium" : "Badge not valid") : error ? "Registry unreachable" : "Checking badge…"}</div>
+            <div className="text-[11.5px] text-zinc-400">
+              {agent ? `Live check ${fmtTime(agent.checked_at)} UK · ${agent.checks_passed}/${agent.checks_total} registry checks` : "Concordium Agent Registry, testnet"}
+            </div>
+          </div>
+        </div>
+      </div>
+      <dl className="divide-y divide-white/[.06] border-t border-white/[.06] text-[13px]">
+        {rows.map(([k, v, good]) => (
+          <div key={k} className="flex items-center justify-between gap-3 px-5 py-2.5">
+            <dt className="whitespace-nowrap text-zinc-500">{k}</dt>
+            <dd className="flex items-center gap-1.5 text-right font-medium text-zinc-200">
+              {agent && (good ? <Check className="h-3.5 w-3.5 text-emerald-400" strokeWidth={2.5} /> : <X className="h-3.5 w-3.5 text-rose-400" strokeWidth={2.5} />)}
+              <span>{v}</span>
+            </dd>
+          </div>
+        ))}
+        <div className="flex items-center justify-between gap-3 px-5 py-2.5">
+          <dt className="text-zinc-500">Owner</dt>
+          <dd>{agent?.owner ? <a href={agent.owner_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-mono text-[12px] text-violet-300 hover:text-violet-200">{short(agent.owner, 8, 6)}<ArrowUpRight className="h-3 w-3" /></a> : "…"}</dd>
+        </div>
+      </dl>
+      <div className="border-t border-white/[.06] px-5 py-4">
+        <div className="flex flex-wrap gap-1.5">
+          {(agent?.skills || [{ id: "scrape-to-sheet", name: "Scrape to Sheet" }]).map((s) => (
+            <span key={s.id} className="rounded-md bg-violet-400/10 px-2 py-1 text-[11.5px] font-medium text-violet-200 ring-1 ring-violet-400/20">{s.name}</span>
+          ))}
+          <span className="rounded-md bg-white/[.04] px-2 py-1 text-[11.5px] font-medium text-zinc-400 ring-1 ring-white/10">Pay on delivery</span>
+          <span className="rounded-md bg-white/[.04] px-2 py-1 text-[11.5px] font-medium text-zinc-400 ring-1 ring-white/10">Fees sponsored</span>
+        </div>
+        {agent?.card_url && (
+          <a href={agent.card_url} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-[12px] font-medium text-zinc-500 hover:text-violet-300">View Agent Card <ArrowUpRight className="h-3 w-3" /></a>
+        )}
+      </div>
+    </section>
+  );
+}
+
 /* ------------------------------------------------------------------ progress sidebar */
 const OUTCOME_TITLE = {
   delivered_paid: "Delivered, then paid",
@@ -1037,7 +1105,7 @@ export default function App() {
 
         <LayoutGroup>
           <main data-run-status={run ? (run.status === "running" ? "running" : (run.finished ? "finished" : "ending")) : "idle"} data-run-outcome={run?.outcome || ""}
-            className={`mx-auto grid items-start gap-5 px-5 pb-20 sm:px-6 ${hasRun ? "max-w-[1240px] lg:grid-cols-[minmax(0,1fr)_400px]" : "max-w-[860px]"}`}>
+            className="mx-auto grid max-w-[1240px] items-start gap-5 px-5 pb-20 sm:px-6 lg:grid-cols-[minmax(0,1fr)_400px]">
             <div className="flex min-w-0 flex-col gap-5">
               <JobsPanel selected={selected} setSelected={setSelected} agent={agent} agentErr={agentErr} agentLoading={agentLoading} onRefresh={loadAgent}
                 modes={modes} mode={mode} setMode={setMode} payWith={payWith} setPayWith={setPayWith} wallet={wallet} onConnect={connect} connecting={connecting}
@@ -1047,21 +1115,26 @@ export default function App() {
               {run?.result?.products && <Products rows={run.result.products} />}
               <AuditLog rows={run?.audit || []} source={run?.audit_source} running={run?.status === "running"} outcome={run?.outcome} hasRun={hasRun} />
               {run && <Console lines={run.console || []} />}
+              <div className="lg:hidden"><AgentCard agent={agent} error={agentErr} loading={agentLoading} onRefresh={loadAgent} /></div>
             </div>
 
-            <AnimatePresence>
-              {hasRun && (
-                <motion.aside key="side" initial={{ opacity: 0, x: 48 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 48 }} transition={{ duration: 0.6, ease: EASE }}
-                  className="hidden min-w-0 lg:block">
-                  <Side run={run} elapsed={elapsed} approve={{ wallet, onApprove: approve, onDecline: decline, state: approveState }} />
-                </motion.aside>
-              )}
-            </AnimatePresence>
+            <aside className="hidden min-w-0 lg:block">
+              <div className="flex flex-col gap-5">
+                <AnimatePresence>
+                  {hasRun && (
+                    <motion.div key="side" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 16 }} transition={{ duration: 0.55, ease: EASE }}>
+                      <Side run={run} elapsed={elapsed} approve={{ wallet, onApprove: approve, onDecline: decline, state: approveState }} />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+                <AgentCard agent={agent} error={agentErr} loading={agentLoading} onRefresh={loadAgent} />
+              </div>
+            </aside>
           </main>
         </LayoutGroup>
 
         <footer className="border-t border-white/[.06] py-6 text-center text-[12px] text-zinc-600">
-          ClientScope runs on the Concordium test network. Built for the Encode Club and Concordium Trusted Agents hackathon.
+          ClientScope runs on the Concordium test network.
         </footer>
       </div>
     </div>
