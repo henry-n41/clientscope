@@ -2,7 +2,7 @@
 
 **An AI work agent that a business hires for one job at a time. It only gets paid when the work is delivered, and every action it takes is logged and fingerprinted on chain.**
 
-Built for the **Concordium Trusted Agents hackathon** with **Encode Club**. Everything runs on the Concordium **testnet**: no real money moves.
+Everything runs on the **Concordium testnet**: no real money moves.
 
 ![ClientScope dashboard after a delivered and paid job](docs/images/dash-3-finished.png)
 
