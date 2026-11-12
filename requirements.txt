@@ -1,0 +1,10 @@
+# Python dependencies for ClientScope (pinned to the versions it was built and tested with, Python 3.13.5)
+fastapi==0.162.4
+uvicorn==0.54.0
+pydantic==2.14.3
+starlette==1.10.0
+requests==2.34.2
+beautifulsoup4==4.15.0
+gspread==6.2.1
+google-auth==2.62.1
+google-auth-oauthlib==1.5.0

@@ -1,0 +1,123 @@
+{
+  "receipt": {
+    "type": "ClientScopeJobReceipt",
+    "version": 1,
+    "job_id": "CS-20261111-A5AD17",
+    "agent": {
+      "registry_token_address": "JyP9YTHUc6YFEXRdx9HKH",
+      "token_id": 1010,
+      "network": "testnet",
+      "card_sha256": "fb3fb839cc10db8ad6b53bf90c3c04cbf11bc6cda7c27e5790a161492be0a9e8"
+    },
+    "buyer": "4j6RhVCWEG3GDQcwcgSQRxu7nmXSC4V834YrsVtudomCG6ueMH",
+    "pay_to": "3qYSik7b8w9NsgeAk91Mrpapq9T5S7EGvmsa3Ecf4449xiJ8cX",
+    "sheet_id": "1lgFjF3eVx3ejMvYcnitBDsQGcTmVUsUB6Sq7ToIEU4I",
+    "delivery": {
+      "result": "delivered"
+    },
+    "payment": {
+      "tx_hash": "dece41cfd875a9306ebf42e94e7f3b629574ac2c549ed547537d2d96f1318dae",
+      "asset": "EUDemo",
+      "amount": "1.000000",
+      "status": "settled"
+    },
+    "audit_log": {
+      "sha256": "a027f3684684d788178ddb0f23349703d057ccb7b19936f3e44362ed5c2c7533",
+      "rows_covered": 17,
+      "row_sha256": [
+        "f63ffd80b0837b2375280d60ea70c6002a829e485380346f7ab6c0df1bc4cffd",
+        "1786e74735c5f58cd05c88a676cbcafcc1313be9d97b071dd1eb75d37e0cc3d5",
+        "cb2f9b45eebc28748f7349794ad5eef958d99fb6485f092aa693843d7029d827",
+        "78c8b35b23ae486f50156df7ee4111af428be9c63967ac7e713447064d43501f",
+        "c4629c4648ccbe547602156250db569c9691fcdeacf344d5c375744fdc522f7a",
+        "857166868280ca9cecc00751b291bde03aa2fdf9f4238f2edd291141fa59858c",
+        "3de196f8fd737f1c0d70bccc75c3c769d662fb2a754a05e649edbe34e401a321",
+        "725a2eb71e3376a3693e30b3aeb84ac4f53465eaaa2ad3b780e0852dd4be791a",
+        "67a52b1610b81ff29d3233934e2928073e11168ceff6ea785ec38283ddfa7dda",
+        "a1402b0bf7ceb827de06a5cfa70f7aeabb8a69ce52c3c4e20823ad1de152bbae",
+        "4438b1e56cdc824842ec3d5067ac935084cf86cd4d7cef2be1f19a627d707d37",
+        "e890d6db041daf123335d0a181d947ab617b9b39febbdddb13d838a7ddb7a7ec",
+        "7f49ce72461bacfd755de2977fa90c66e3c9499f1354ad80c6d8c5d36d231036",
+        "31d8b94de16473c27845df9969403073adc021f6282826afa21db12ae2f82d4e",
+        "da7365028fb3dabfa35d54e7e0ce038670a98e0b7b403123776258ebadd2617f",
+        "010a19b098847c6879dd8f5cbd2c6e7dd16280b2eb2339c035c8dcd31d3a9e2d",
+        "4a020bfcefc35e420cf98450f21af821a997a94ea0fb2d5f5576598ac96793ac"
+      ],
+      "covers": "every Audit Log row above the log_anchored row, header included"
+    },
+    "products": {
+      "sha256": "6ce620221e5ce4a5f18d6b2513088f29f59c9b63d2ae08acfbd8aa47645a5069",
+      "rows": 5
+    },
+    "timestamps": {
+      "first_log_entry": "2026-11-11 21:41:06 UTC",
+      "last_log_entry": "2026-11-11 21:41:38 UTC",
+      "issued_at": "2026-11-11 21:42:13 UTC"
+    },
+    "anchor": {
+      "chain": "concordium-testnet",
+      "method": "RegisterData CBOR CSJRA v1",
+      "account": "3N9s8YUN2pxMuP5bszXUUk9vZ3ks7tDgxgzhG5arGr5qGYe6fn"
+    },
+    "buyer_verification": {
+      "verified": true,
+      "policy": "ClientScope accepted-buyer policy v1",
+      "checks": {
+        "challenge_fresh": true,
+        "account_exists": true,
+        "challenge_signed": true,
+        "identity_backed": true,
+        "known_identity_provider": true,
+        "credential_valid": true,
+        "anonymity_revocation": true,
+        "eudemo_allow_listed": true
+      },
+      "facts": {
+        "account": "4j6RhVCWEG3GDQcwcgSQRxu7nmXSC4V834YrsVtudomCG6ueMH",
+        "job_id": "CS-20261111-A5AD17",
+        "identity_provider": {
+          "id": 3,
+          "name": "Digital Trust Solutions TestNet"
+        },
+        "credential_valid_to": "2031-11",
+        "credential_created": "2026-11",
+        "anonymity_revokers": 3,
+        "revealed_attributes": 0,
+        "eudemo_balance": "192.000000"
+      },
+      "challenge": "ClientScope buyer verification\nservice: ClientScope Work Agent (Concordium agent #1010)\njob: CS-20261111-A5AD17\naccount: 4j6RhVCWEG3GDQcwcgSQRxu7nmXSC4V834YrsVtudomCG6ueMH\nnonce: aff23a1f10bab5e9e33d65ffbeb292fd\nexpires: 2026-11-11T21:46:14.189Z",
+      "signature": {
+        "0": {
+          "0": "ed91aec0ddd3e10a464029efd72d271c79066b3062dcfd845f6d44a9eeaff7edf436272eb012dce49353163daa7f8c3c702080254da84f17fc1fe8fed93cc905"
+        }
+      },
+      "checked_at": "2026-11-11T21:41:15.427Z"
+    }
+  },
+  "receipt_sha256": "95fd04677bfd0e08a9c5fca3793f382461bbd6ef78e240da0969cdf6257b6571",
+  "anchor": {
+    "tx_hash": "0cc6f7b0621947e282857a088c389bb8a5a8922d4a8c2942b18c2a1db0bfadce",
+    "status": "finalized",
+    "block_hash": "035cb230e0a9ae48a4d1aacb84914227067454e9e622fb846eb8f0d1e92a24d4",
+    "block_height": "50687429",
+    "block_time": "2026-11-11T21:42:21.270Z",
+    "type": "registerData",
+    "sender": "3N9s8YUN2pxMuP5bszXUUk9vZ3ks7tDgxgzhG5arGr5qGYe6fn",
+    "sender_cost_micro": "4193508",
+    "sponsor": null,
+    "data_hex": "a464747970656543534a52416776657273696f6e016468617368582095fd04677bfd0e08a9c5fca3793f382461bbd6ef78e240da0969cdf6257b6571667075626c6963a4636a6f627243532d32303236313131312d413541443137656167656e741903f2636c6f675820a027f3684684d788178ddb0f23349703d057ccb7b19936f3e44362ed5c2c753366726573756c746964656c697665726564",
+    "anchor": {
+      "type": "CSJRA",
+      "version": 1,
+      "hash": "95fd04677bfd0e08a9c5fca3793f382461bbd6ef78e240da0969cdf6257b6571",
+      "public": {
+        "job": "CS-20261111-A5AD17",
+        "agent": 1010,
+        "result": "delivered",
+        "log_sha256": "a027f3684684d788178ddb0f23349703d057ccb7b19936f3e44362ed5c2c7533"
+      }
+    },
+    "fee_ccd": "4.193508",
+    "data_bytes": 155
+  }
+}

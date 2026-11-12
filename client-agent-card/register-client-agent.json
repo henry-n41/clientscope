@@ -1,0 +1,60 @@
+{
+ "network": "testnet",
+ "contract_address": {
+  "index": 12802,
+  "subindex": 0
+ },
+ "receive_name": "CIS-8004.register",
+ "sender": "4j6RhVCWEG3GDQcwcgSQRxu7nmXSC4V834YrsVtudomCG6ueMH",
+ "parameter_json": {
+  "agent_uri": {
+   "Some": [
+    "https://henry-n41.github.io/clientscope-supplier-demo/client-agent-card.json"
+   ]
+  },
+  "metadata_hash": {
+   "Some": [
+    [
+     111,
+     3,
+     244,
+     198,
+     156,
+     12,
+     27,
+     55,
+     139,
+     205,
+     58,
+     89,
+     91,
+     227,
+     98,
+     190,
+     42,
+     107,
+     87,
+     86,
+     69,
+     87,
+     248,
+     103,
+     32,
+     73,
+     133,
+     252,
+     161,
+     17,
+     179,
+     33
+    ]
+   ]
+  },
+  "external_reference": {
+   "None": []
+  },
+  "initial_metadata": []
+ },
+ "card_sha256": "6f03f4c69c0c1b378bcd3a595be362be2a6b57564557f867204985fca111b321",
+ "status": "PREPARED, NOT SENT"
+}

@@ -1,0 +1,31 @@
+# Secrets: never commit
+.secrets/
+.env
+.env.*
+*.key
+*.pem
+*wallet*.export
+*.export.json.key
+
+# Local environments and dependencies
+.venv/
+tunnel-venv/
+node_modules/
+__pycache__/
+*.pyc
+
+# Build output (Render builds the front end itself)
+dashboard/web/dist/
+
+# Runtime output written by the agent and dashboard
+dashboard/.run/
+/build-log/
+/last_run.json
+/trust_check.json
+
+# Local-only helpers and older experiments
+dashboard/fwd.py
+/sheet_test.py
+/supplier-page/
+/package.json
+/package-lock.json

@@ -1,0 +1,39 @@
+# Render Blueprint for ClientScope: one free web service that serves the dashboard and its API.
+# The FastAPI app starts the x402 pay-on-delivery job server (Node) as a child process on an internal port.
+services:
+  - type: web
+    name: clientscope
+    runtime: python
+    plan: free
+    branch: main
+    healthCheckPath: /api/health
+    buildCommand: >-
+      pip install -r requirements.txt &&
+      npm ci --include=dev --prefix x402 &&
+      npm ci --include=dev --prefix dashboard/web &&
+      npm run build --prefix dashboard/web
+    startCommand: uvicorn dashboard.api.app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      # Runtime versions (match the versions ClientScope was tested with)
+      - key: PYTHON_VERSION
+        value: "3.13.5"
+      - key: NODE_VERSION
+        value: "24.22.1"
+      # Secrets: set these by hand in the Render dashboard, never in this file
+      - key: CCD_CLIENT_PRIVATE_KEY
+        sync: false
+      - key: CCD_SPONSOR_PRIVATE_KEY
+        sync: false
+      - key: GOOGLE_TOKEN_JSON
+        sync: false
+      # Non-secret settings
+      - key: CCD_GRPC_HOST
+        value: grpc.testnet.concordium.com
+      - key: CCD_GRPC_PORT
+        value: "20000"
+      - key: CCD_GRPC_TLS
+        value: "true"
+      - key: CLIENTSCOPE_X402_PORT
+        value: "4021"
+      - key: CLIENTSCOPE_X402_HOST
+        value: 127.0.0.1

@@ -1,0 +1,33 @@
+{
+  "type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+  "name": "Northgate Supplies Buyer Agent (demo)",
+  "description": "Buyer agent for Northgate Supplies (demo). Hires work agents over x402, pays in EUDemo on delivery, and proves control of its Concordium account by signing ClientScope's buyer challenge.",
+  "url": "https://henry-n41.github.io/clientscope-supplier-demo/client-agent-card.json",
+  "version": "1.0.0",
+  "provider": {
+    "organization": "Strapnodes",
+    "url": "https://henry-n41.github.io/clientscope-supplier-demo/"
+  },
+  "capabilities": {
+    "extensions": [
+      {
+        "uri": "https://docs.concordium.com/a2a-extensions/concordium-badge/v1",
+        "description": "Verified by Concordium badge: on-chain agent identity in a CIS-8004 registry",
+        "required": false,
+        "params": {
+          "owner": {
+            "account": "ccd:4221332d34e1694168c2a0c0b3fd0f27:4j6RhVCWEG3GDQcwcgSQRxu7nmXSC4V834YrsVtudomCG6ueMH"
+          },
+          "agentWallet": "ccd:4221332d34e1694168c2a0c0b3fd0f27:4j6RhVCWEG3GDQcwcgSQRxu7nmXSC4V834YrsVtudomCG6ueMH",
+          "contracts": {
+            "cis8004": {
+              "index": 12802,
+              "subindex": 0
+            }
+          }
+        }
+      }
+    ]
+  },
+  "role": "buyer"
+}
