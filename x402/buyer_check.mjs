@@ -21,11 +21,11 @@ const CHALLENGE_TTL_MS = 5 * 60_000;
 const challenges = new Map(); // nonce -> { account, jobId, message, expires, used }
 const sessions = new Map();   // session token -> { account, jobId, expires, result }
 
-export function issueChallenge(account, jobId) {
+export function issueChallenge(account, jobId, extra = "") {
   AccountAddress.fromBase58(account); // throws on a bad address
   const nonce = randomBytes(16).toString("hex");
   const expires = new Date(Date.now() + CHALLENGE_TTL_MS).toISOString();
-  const message = `ClientScope buyer verification\nservice: ClientScope Work Agent (Concordium agent #1010)\njob: ${jobId}\naccount: ${account}\nnonce: ${nonce}\nexpires: ${expires}`;
+  const message = `ClientScope buyer verification\nservice: ClientScope Work Agent (Concordium agent #1010)\njob: ${jobId}\naccount: ${account}\nnonce: ${nonce}\nexpires: ${expires}${extra ? `\n${extra}` : ""}`;
   challenges.set(nonce, { account, jobId, message, expires: Date.now() + CHALLENGE_TTL_MS, used: false });
   return { nonce, message, expires };
 }

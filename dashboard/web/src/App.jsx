@@ -3,8 +3,9 @@ import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
 import {
   ArrowUpRight, BadgeCheck, Bot, Check, ChevronDown, CircleCheck, FileSpreadsheet, FlaskConical, HandCoins, Link2,
   LoaderCircle, Lock, Minus, Receipt, RotateCw, ScrollText, ShieldAlert, ShieldCheck, ShieldX, Sparkles, Store,
-  Terminal, UserCheck, X, Zap,
+  Terminal, UserCheck, X, Zap, Wallet, Mail, FileText, PenLine, LineChart, PackageSearch, CalendarClock,
 } from "lucide-react";
+import { INSTALL_URL, useWallet } from "./wallet.js";
 
 const API = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
 const EXPLORER = "https://ccdexplorer.io/testnet/transaction/";
@@ -22,6 +23,12 @@ const STEP_COPY = {
   delivery: ["Check the delivery", "Every row must be complete and match the supplier page."],
   settle: ["Release the payment", "Payment is sent only after the delivery check passes."],
   anchor: ["Anchor the receipt", "The log's fingerprint is stored on Concordium for good."],
+};
+const WALLET_STEP_COPY = {
+  ...STEP_COPY,
+  buyer: ["Verify you", "ClientScope checks your wallet signature and account on Concordium."],
+  hold: ["Sign the order", "You confirm the job and price in your wallet. Nothing is paid yet."],
+  settle: ["Approve the payment", "After delivery passes, you approve 1 EUDemo in your wallet."],
 };
 const STEP_KEYS = Object.keys(STEP_COPY);
 const IDLE_STEPS = STEP_KEYS.map((key) => ({ key, status: "pending", items: [] }));
@@ -79,7 +86,7 @@ const Spin = ({ c = "h-4 w-4" }) => <LoaderCircle className={`${c} animate-spin`
 /* ------------------------------------------------------------------ hero */
 const FEATURES = [
   [BadgeCheck, "Verified agent", "Its identity badge is checked live on Concordium before every job.", "from-violet-500/20 text-violet-300"],
-  [HandCoins, "Pay on delivery", "Your payment is held, and only released once the work passes its checks.", "from-emerald-500/20 text-emerald-300"],
+  [HandCoins, "Pay on delivery", "You only pay once the work has passed its checks.", "from-emerald-500/20 text-emerald-300"],
   [Receipt, "Tamper-proof receipt", "Every step is logged, and the log's fingerprint is stored on chain.", "from-sky-500/20 text-sky-300"],
   [UserCheck, "Verified buyers only", "Unknown or fake buyers are turned away before anything runs.", "from-amber-500/20 text-amber-200"],
 ];
@@ -128,7 +135,7 @@ function Hero({ agent, agentErr }) {
   );
 }
 
-/* ------------------------------------------------------------------ new job */
+/* ------------------------------------------------------------------ jobs */
 function Credential({ ok, loading, children }) {
   return (
     <div className="flex items-center gap-2 text-[12.5px] text-zinc-300">
@@ -138,95 +145,170 @@ function Credential({ ok, loading, children }) {
   );
 }
 
-function NewJob({ agent, agentErr, agentLoading, onRefresh, modes, mode, setMode, onHire, busy, starting, serverReady, err }) {
+function Segmented({ value, onChange, options, id }) {
+  return (
+    <div className="grid grid-cols-2 gap-1 rounded-xl bg-black/30 p-1 text-[12.5px] font-medium ring-1 ring-white/[.06] sm:inline-grid sm:text-[13px]">
+      {options.map(([v, label, Icon]) => {
+        const on = v === value;
+        return (
+          <button key={v} type="button" onClick={() => onChange(v)}
+            className={`relative flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-1.5 transition-colors sm:px-3.5 ${on ? "text-white" : "text-zinc-500 hover:text-zinc-300"}`}>
+            {on && <motion.span layoutId={id} className="absolute inset-0 rounded-lg bg-white/10 ring-1 ring-white/10" transition={{ type: "spring", stiffness: 400, damping: 32 }} />}
+            <Icon className="relative h-3.5 w-3.5" /><span className="relative">{label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function HireButton({ onClick, disabled, busy, children }) {
+  return (
+    <motion.button onClick={onClick} disabled={disabled} whileHover={disabled ? {} : { y: -1 }} whileTap={disabled ? {} : { scale: 0.985 }}
+      className="btn-shine relative flex w-full items-center justify-center gap-2 overflow-hidden rounded-2xl bg-gradient-to-r from-violet-500 via-indigo-500 to-sky-500 px-5 py-4 text-[15px] font-semibold text-white shadow-[0_10px_40px_-10px_rgba(124,108,255,.8)] ring-1 ring-white/20 transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45 disabled:shadow-none">
+      {busy ? <><Spin /> Job running…</> : children}
+    </motion.button>
+  );
+}
+
+function WalletPanel({ wallet, onConnect, connecting, onUseDemo }) {
+  if (wallet.status === "checking") return <div className="flex items-center gap-2 rounded-2xl bg-black/20 px-4 py-3.5 text-[13px] text-zinc-400 ring-1 ring-white/[.06]"><Spin c="h-4 w-4" /> Looking for the Concordium Browser Wallet…</div>;
+  if (wallet.status === "missing") return (
+    <div className="rounded-2xl bg-black/20 p-4 ring-1 ring-white/[.06]" data-wallet="missing">
+      <div className="flex items-start gap-3">
+        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-400/10 text-amber-300 ring-1 ring-amber-400/20"><Wallet className="h-[18px] w-[18px]" /></div>
+        <div className="min-w-0">
+          <div className="text-[14px] font-semibold text-zinc-100">Concordium Browser Wallet not found</div>
+          <p className="mt-0.5 text-[12.5px] leading-relaxed text-zinc-400">To hire with your own account, add the Concordium Wallet extension to Chrome, Edge or Brave, switch it to Testnet, then reload this page.</p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <a href={INSTALL_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-[12.5px] font-medium text-white ring-1 ring-white/15 transition hover:bg-white/15">Install the wallet <ArrowUpRight className="h-3.5 w-3.5" /></a>
+            <button onClick={onUseDemo} className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-violet-300 transition hover:bg-white/5 hover:text-violet-200">Try with a demo buyer instead</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+  if (wallet.status === "connected") return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-black/20 px-4 py-3 ring-1 ring-white/[.06]" data-wallet="connected">
+      <div className="flex items-center gap-3">
+        <div className="relative grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-violet-400 to-sky-500 text-white"><Wallet className="h-4 w-4" />
+          <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-emerald-400 ring-2 ring-ink-900" /></div>
+        <div>
+          <div className="text-[11.5px] text-zinc-500">Connected wallet</div>
+          <div className="font-mono text-[13px] font-medium text-zinc-100">{short(wallet.account, 6, 6)}</div>
+        </div>
+      </div>
+      {wallet.testnet ? <Pill tone="green" dot>Testnet</Pill> : <Pill tone="amber" dot>Switch your wallet to Testnet</Pill>}
+    </div>
+  );
+  return (
+    <div className="rounded-2xl bg-black/20 p-4 ring-1 ring-white/[.06]" data-wallet="disconnected">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-violet-400/10 text-violet-300 ring-1 ring-violet-400/20"><Wallet className="h-[18px] w-[18px]" /></div>
+          <div>
+            <div className="text-[14px] font-semibold text-zinc-100">Connect your Concordium wallet</div>
+            <p className="mt-0.5 text-[12.5px] leading-relaxed text-zinc-400">You'll need a Testnet account on the EUDemo allow list, holding at least 1 EUDemo.</p>
+          </div>
+        </div>
+        <button onClick={onConnect} disabled={connecting} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-[13px] font-semibold text-ink-950 shadow-lg shadow-black/30 transition hover:bg-zinc-200 disabled:opacity-60">
+          {connecting ? <Spin c="h-4 w-4" /> : <Wallet className="h-4 w-4" />} Connect wallet
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SupplierJob({ agent, agentErr, agentLoading, onRefresh, modes, mode, setMode, payWith, setPayWith, wallet, onConnect, connecting,
+  onHire, onHireWallet, busy, starting, serverReady, err, prompt }) {
   const failModes = modes.filter((m) => m.id !== "normal");
   const isFail = mode !== "normal";
-  const agentOk = agent?.verified || mode === "bad_card";
-  const disabled = busy || starting || !serverReady || !agentOk;
+  const agentOk = agent?.verified || (payWith === "demo" && mode === "bad_card");
+  const walletReady = wallet.status === "connected" && wallet.testnet;
+  const disabled = busy || starting || !serverReady || !agentOk || (payWith === "wallet" && !walletReady);
   return (
-    <motion.section layout="position" transition={{ duration: 0.5, ease: EASE }} className="card card-hero overflow-hidden rounded-3xl">
-      <div className="p-5 sm:p-7">
-        <div className="grid items-start gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
-          <div className="flex items-start gap-3.5">
-            <div className="hidden h-11 w-11 shrink-0 place-items-center rounded-2xl sm:grid bg-gradient-to-br from-emerald-400/25 to-sky-500/10 text-emerald-300 ring-1 ring-white/10"><FileSpreadsheet className="h-5 w-5" strokeWidth={1.8} /></div>
-            <div className="min-w-0">
-              <div className="text-[11px] font-semibold uppercase tracking-[.16em] text-violet-300/80">New job</div>
-              <h2 className="mt-1 text-[20px] font-semibold tracking-tight text-white sm:text-[22px]">Supplier price list to Google Sheet</h2>
-              <p className="mt-1 text-[14px] leading-relaxed text-zinc-400">ClientScope reads a supplier's live prices and stock, and puts them in a new Google Sheet with a full log of what it did.</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 rounded-2xl bg-black/25 px-4 py-2.5 ring-1 ring-white/[.06] sm:block sm:text-right">
-            <div className="text-[11px] font-medium text-zinc-500">Price</div>
-            <div className="text-[22px] font-semibold leading-tight tracking-tight text-white">1 <span className="text-[14px] font-medium text-zinc-400">EUDemo</span></div>
-            <div className="text-[11px] text-zinc-500">Test euro token, no fee</div>
-          </div>
+    <div className="space-y-5 px-5 pb-5 sm:px-6 sm:pb-6">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-2xl bg-black/20 p-4 ring-1 ring-white/[.06]">
+          <div className="mb-2.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.14em] text-zinc-500"><Store className="h-3.5 w-3.5" /> The job</div>
+          <dl className="space-y-2 text-[13px]">
+            <div className="flex justify-between gap-3"><dt className="text-zinc-500">Client</dt><dd className="font-medium text-zinc-200">Northgate Supplies (demo)</dd></div>
+            <div className="flex justify-between gap-3"><dt className="text-zinc-500">Supplier page</dt><dd><a className="inline-flex items-center gap-1 font-medium text-violet-300 hover:text-violet-200" href={SUPPLIER} target="_blank" rel="noreferrer">Open page <ArrowUpRight className="h-3.5 w-3.5" /></a></dd></div>
+            <div className="flex justify-between gap-3"><dt className="shrink-0 text-zinc-500">You get</dt><dd className="text-right font-medium text-zinc-200">A Google Sheet with the results</dd></div>
+            <div className="flex justify-between gap-3"><dt className="text-zinc-500">Price</dt><dd className="font-medium text-zinc-200">1 EUDemo, no fee for you</dd></div>
+          </dl>
         </div>
-
-        <div className="mt-6 grid gap-3 sm:grid-cols-2">
-          <div className="rounded-2xl bg-black/20 p-4 ring-1 ring-white/[.06]">
-            <div className="mb-2.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.14em] text-zinc-500"><Store className="h-3.5 w-3.5" /> The job</div>
-            <dl className="space-y-2 text-[13px]">
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">Client</dt><dd className="font-medium text-zinc-200">Northgate Supplies (demo)</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">Supplier page</dt><dd><a className="inline-flex items-center gap-1 font-medium text-violet-300 hover:text-violet-200" href={SUPPLIER} target="_blank" rel="noreferrer">Open page <ArrowUpRight className="h-3.5 w-3.5" /></a></dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">You get</dt><dd className="font-medium text-zinc-200">A Google Sheet in your Drive</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-zinc-500">Buyer account</dt><dd className="font-mono text-[12px] text-zinc-400">{short(BUYER, 6, 4)}</dd></div>
-            </dl>
+        <div className="rounded-2xl bg-black/20 p-4 ring-1 ring-white/[.06]">
+          <div className="mb-2.5 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.14em] text-zinc-500"><ShieldCheck className="h-3.5 w-3.5" /> The agent</div>
+            <button onClick={onRefresh} title="Check again now" className="rounded-md p-1 text-zinc-500 transition hover:bg-white/5 hover:text-zinc-300">
+              {agentLoading ? <Spin c="h-3.5 w-3.5" /> : <RotateCw className="h-3.5 w-3.5" />}
+            </button>
           </div>
-          <div className="rounded-2xl bg-black/20 p-4 ring-1 ring-white/[.06]">
-            <div className="mb-2.5 flex items-center justify-between">
-              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.14em] text-zinc-500"><ShieldCheck className="h-3.5 w-3.5" /> The agent</div>
-              <button onClick={onRefresh} title="Check again now" className="rounded-md p-1 text-zinc-500 transition hover:bg-white/5 hover:text-zinc-300">
-                {agentLoading ? <Spin c="h-3.5 w-3.5" /> : <RotateCw className="h-3.5 w-3.5" />}
-              </button>
+          {agentErr && !agent ? (
+            <div className="text-[12.5px] leading-relaxed text-rose-300">Couldn't reach the Concordium registry to check the badge. Press the refresh button to try again.</div>
+          ) : (
+            <div className="space-y-2">
+              <Credential ok={agent?.badge_valid} loading={!agent}>{agent ? `Badge valid, ${agent.checks_passed} of ${agent.checks_total} registry checks passed` : "Checking the badge…"}</Credential>
+              <Credential ok={agent?.hash_match} loading={!agent}>{agent ? (agent.hash_match ? "ID card matches the one on chain" : "ID card does not match the chain") : "Comparing the ID card…"}</Credential>
+              <Credential ok={agent?.status === "Active"} loading={!agent}>{agent ? `Status on chain: ${agent.status || "unknown"}` : "Reading the status…"}</Credential>
+              {agent && <div className="pt-0.5 text-[11.5px] text-zinc-500">Checked {fmtTime(agent.checked_at)} UK time</div>}
             </div>
-            {agentErr && !agent ? (
-              <div className="text-[12.5px] leading-relaxed text-rose-300">Couldn't reach the Concordium registry to check the badge. Press the refresh button to try again.</div>
-            ) : (
-              <div className="space-y-2">
-                <Credential ok={agent?.badge_valid} loading={!agent}>{agent ? `Badge valid, ${agent.checks_passed} of ${agent.checks_total} registry checks passed` : "Checking the badge…"}</Credential>
-                <Credential ok={agent?.hash_match} loading={!agent}>{agent ? (agent.hash_match ? "ID card matches the one on chain" : "ID card does not match the chain") : "Comparing the ID card…"}</Credential>
-                <Credential ok={agent?.status === "Active"} loading={!agent}>{agent ? `Status on chain: ${agent.status || "unknown"}` : "Reading the status…"}</Credential>
-                {agent && <div className="pt-0.5 text-[11.5px] text-zinc-500">Checked {fmtTime(agent.checked_at)} UK time</div>}
+          )}
+        </div>
+      </div>
+
+      <div>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-[12px] font-medium text-zinc-400">Pay with</div>
+          <Segmented id="paywith" value={payWith} onChange={setPayWith} options={[["wallet", "Your wallet", Wallet], ["demo", "Demo buyer", Bot]]} />
+        </div>
+        <AnimatePresence mode="wait" initial={false}>
+          {payWith === "wallet" ? (
+            <motion.div key="w" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.25 }}>
+              <WalletPanel wallet={wallet} onConnect={onConnect} connecting={connecting} onUseDemo={() => setPayWith("demo")} />
+            </motion.div>
+          ) : (
+            <motion.div key="d" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.25 }}
+              className="rounded-2xl bg-black/20 p-4 ring-1 ring-white/[.06]">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <Segmented id="scenario" value={isFail ? "fail" : "normal"} onChange={(v) => setMode(v === "normal" ? "normal" : isFail ? mode : "delivery_fail")}
+                  options={[["normal", "Real hire", Zap], ["fail", "Simulate a failure", FlaskConical]]} />
+                <AnimatePresence initial={false}>
+                  {isFail && (
+                    <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} className="relative sm:min-w-[300px]">
+                      <select value={mode} onChange={(e) => setMode(e.target.value)}
+                        className="w-full appearance-none rounded-xl bg-black/30 py-2 pl-3 pr-9 text-[13px] text-zinc-200 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-violet-400/60">
+                        {failModes.map((m) => <option key={m.id} value={m.id}>{MODE_COPY[m.id] || m.label}</option>)}
+                      </select>
+                      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
-            )}
-          </div>
-        </div>
+              <p className="mt-3 flex items-start gap-1.5 text-[12px] leading-relaxed text-zinc-500"><Bot className="mt-0.5 h-3.5 w-3.5 shrink-0" />No wallet needed. A demo buyer account signs on ClientScope's server, so you can see the whole flow. Testnet only, no real money.</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
 
-        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="grid grid-cols-2 gap-1 rounded-xl bg-black/30 p-1 text-[12.5px] font-medium ring-1 ring-white/[.06] sm:inline-grid sm:text-[13px]">
-            {[["normal", "Real hire", Zap], ["fail", "Simulate a failure", FlaskConical]].map(([id, label, Icon]) => {
-              const on = id === "normal" ? !isFail : isFail;
-              return (
-                <button key={id} onClick={() => (id === "normal" ? setMode("normal") : isFail || setMode("delivery_fail"))}
-                  className={`relative flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-1.5 sm:px-3.5 transition-colors ${on ? "text-white" : "text-zinc-500 hover:text-zinc-300"}`}>
-                  {on && <motion.span layoutId="seg" className="absolute inset-0 rounded-lg bg-white/10 ring-1 ring-white/10" transition={{ type: "spring", stiffness: 400, damping: 32 }} />}
-                  <Icon className="relative h-3.5 w-3.5" /><span className="relative">{label}</span>
-                </button>
-              );
-            })}
-          </div>
-          <AnimatePresence initial={false}>
-            {isFail && (
-              <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} className="relative sm:min-w-[320px]">
-                <select value={mode} onChange={(e) => setMode(e.target.value)}
-                  className="w-full appearance-none rounded-xl bg-black/30 py-2 pl-3 pr-9 text-[13px] text-zinc-200 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-violet-400/60">
-                  {failModes.map((m) => <option key={m.id} value={m.id}>{MODE_COPY[m.id] || m.label}</option>)}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        <motion.button onClick={onHire} disabled={disabled} whileHover={disabled ? {} : { y: -1 }} whileTap={disabled ? {} : { scale: 0.985 }}
-          className="btn-shine relative mt-4 flex w-full items-center justify-center gap-2 overflow-hidden rounded-2xl bg-gradient-to-r from-violet-500 via-indigo-500 to-sky-500 px-5 py-4 text-[15px] font-semibold text-white shadow-[0_10px_40px_-10px_rgba(124,108,255,.8)] ring-1 ring-white/20 transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45 disabled:shadow-none">
-          {busy || starting ? <><Spin /> Job running…</> : <><Zap className="h-4 w-4" fill="currentColor" /> Hire ClientScope · 1 EUDemo</>}
-        </motion.button>
+      <div>
+        <HireButton onClick={payWith === "wallet" ? onHireWallet : onHire} disabled={disabled} busy={busy || starting}>
+          <Zap className="h-4 w-4" fill="currentColor" /> Hire ClientScope · 1 EUDemo
+        </HireButton>
         <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-[12.5px] text-zinc-500">
-          <Lock className="h-3.5 w-3.5" />
-          {!serverReady ? "Starting the job server…" : !agentOk ? "Waiting for a valid badge check" : isFail ? "Demo of a failure. You will not be charged." : "Your payment is held, and only released after the delivery check passes."}
+          <Lock className="h-3.5 w-3.5 shrink-0" />
+          {!serverReady ? "Starting the job server…"
+            : !agentOk ? "Waiting for a valid badge check"
+            : payWith === "wallet" ? (walletReady ? "You sign once to confirm the order, and approve the payment only after the delivery check passes." : wallet.status === "connected" ? "Switch your wallet to Testnet to continue." : wallet.status === "missing" ? "Install the wallet, or try with a demo buyer." : "Connect your wallet to hire.")
+            : isFail ? "Demo of a failure. Nothing will be charged." : "The payment is held, and only released after the delivery check passes."}
         </p>
         <AnimatePresence>
+          {prompt && (
+            <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mt-3 flex items-center gap-2.5 rounded-xl bg-violet-400/10 px-3.5 py-2.5 text-[13px] text-violet-100 ring-1 ring-violet-400/25">
+              <Spin c="h-4 w-4 shrink-0 text-violet-300" /><span>{prompt}</span>
+            </motion.div>
+          )}
           {err && (
             <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mt-3 flex items-start gap-2 rounded-xl bg-amber-400/10 px-3.5 py-2.5 text-[13px] text-amber-200 ring-1 ring-amber-400/25">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" /><span>{err}</span>
@@ -234,9 +316,198 @@ function NewJob({ agent, agentErr, agentLoading, onRefresh, modes, mode, setMode
           )}
         </AnimatePresence>
       </div>
+    </div>
+  );
+}
+
+function Chips({ value, onChange, options }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map(([v, label, Icon]) => (
+        <button key={v} type="button" onClick={() => onChange(v)}
+          className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-[13px] font-medium ring-1 transition ${value === v ? "bg-violet-400/15 text-white ring-violet-400/50" : "bg-black/20 text-zinc-400 ring-white/[.08] hover:text-zinc-200 hover:ring-white/15"}`}>
+          {Icon && <Icon className="h-3.5 w-3.5" />}{label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const field = "w-full rounded-xl bg-black/30 px-3.5 py-2.5 text-[13.5px] text-zinc-100 placeholder:text-zinc-600 outline-none ring-1 ring-white/10 transition focus:ring-2 focus:ring-violet-400/60";
+
+function CustomJob() {
+  const [f, setF] = useState({ task: "", sources: "", deliverable: "sheet", frequency: "once", budget: "" });
+  const [sending, setSending] = useState(false);
+  const [err, setErr] = useState(null);
+  const [rec, setRec] = useState(null);
+  const set = (k) => (v) => setF((x) => ({ ...x, [k]: v?.target ? v.target.value : v }));
+  const submit = async (e) => {
+    e.preventDefault(); setErr(null);
+    if (f.task.trim().length < 15) { setErr("Please describe the job in a sentence or two."); return; }
+    setSending(true);
+    try {
+      const body = { task: f.task, sources: f.sources, deliverable: f.deliverable, frequency: f.frequency, budget: f.budget ? Number(f.budget) : null };
+      const r = await fetch(`${API}/api/custom-jobs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { setErr(typeof d.detail === "string" ? d.detail.charAt(0).toUpperCase() + d.detail.slice(1) + "." : "Please check the form and try again."); return; }
+      setRec(d);
+    } catch { setErr("Couldn't reach ClientScope. Please try again."); }
+    finally { setSending(false); }
+  };
+  if (rec) return <DraftPlan rec={rec} onEdit={() => setRec(null)} onNew={() => { setRec(null); setF({ task: "", sources: "", deliverable: "sheet", frequency: "once", budget: "" }); }} />;
+  return (
+    <form onSubmit={submit} className="space-y-4 px-5 pb-5 sm:px-6 sm:pb-6" data-custom="form">
+      <label className="block">
+        <span className="mb-1.5 block text-[12.5px] font-medium text-zinc-300">What do you need done?</span>
+        <textarea rows={3} value={f.task} onChange={set("task")} className={field + " resize-none"}
+          placeholder="For example: every Monday, collect the prices of my 20 best sellers from my two suppliers and flag anything that went up." />
+      </label>
+      <label className="block">
+        <span className="mb-1.5 block text-[12.5px] font-medium text-zinc-300">Websites or source links <span className="font-normal text-zinc-500">(one per line)</span></span>
+        <textarea rows={2} value={f.sources} onChange={set("sources")} className={field + " resize-none font-mono text-[12.5px]"} placeholder={"https://supplier-one.co.uk/prices\nhttps://supplier-two.com/catalogue"} />
+      </label>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <span className="mb-1.5 block text-[12.5px] font-medium text-zinc-300">What should you receive?</span>
+          <Chips value={f.deliverable} onChange={set("deliverable")} options={[["sheet", "Google Sheet", FileSpreadsheet], ["email", "Email summary", Mail], ["csv", "CSV file", FileText]]} />
+        </div>
+        <div>
+          <span className="mb-1.5 block text-[12.5px] font-medium text-zinc-300">How often?</span>
+          <Chips value={f.frequency} onChange={set("frequency")} options={[["once", "Once"], ["daily", "Daily"], ["weekly", "Weekly"]]} />
+        </div>
+      </div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <label className="block sm:w-56">
+          <span className="mb-1.5 block text-[12.5px] font-medium text-zinc-300">Budget <span className="font-normal text-zinc-500">(optional)</span></span>
+          <div className="relative">
+            <input type="number" min="0" step="0.5" inputMode="decimal" value={f.budget} onChange={set("budget")} className={field + " pr-20"} placeholder="0" />
+            <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-[12.5px] text-zinc-500">EUDemo</span>
+          </div>
+        </label>
+        <motion.button type="submit" disabled={sending} whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }}
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-[14px] font-semibold text-ink-950 shadow-lg shadow-black/30 transition hover:bg-zinc-200 disabled:opacity-60">
+          {sending ? <Spin c="h-4 w-4" /> : <Sparkles className="h-4 w-4" />} Get a draft plan
+        </motion.button>
+      </div>
+      {err && <div className="flex items-start gap-2 rounded-xl bg-amber-400/10 px-3.5 py-2.5 text-[13px] text-amber-200 ring-1 ring-amber-400/25"><ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />{err}</div>}
+      <p className="text-[12px] leading-relaxed text-zinc-500">Nothing runs yet. You get a draft plan to review, and ClientScope confirms a fixed price before any work or payment.</p>
+    </form>
+  );
+}
+
+function DraftPlan({ rec, onEdit, onNew }) {
+  const p = rec.plan;
+  const freq = { once: "One-off job", daily: "Runs daily", weekly: "Runs weekly" }[p.frequency];
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45, ease: EASE }} className="space-y-4 px-5 pb-5 sm:px-6 sm:pb-6" data-custom="plan">
+      <div className="flex flex-wrap items-center gap-2">
+        <Pill tone="violet"><Sparkles className="h-3 w-3" /> Draft plan</Pill>
+        <Pill tone="amber" dot pulse>Waiting for ClientScope to confirm</Pill>
+        <span className="ml-auto font-mono text-[11px] text-zinc-600">Request {rec.id}</span>
+      </div>
+      <blockquote className="rounded-2xl bg-black/20 px-4 py-3 text-[13.5px] leading-relaxed text-zinc-300 ring-1 ring-white/[.06]">“{p.summary}”</blockquote>
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+        <div className="rounded-2xl bg-black/20 p-4 ring-1 ring-white/[.06]">
+          <div className="mb-3 text-[11px] font-semibold uppercase tracking-[.14em] text-zinc-500">Steps</div>
+          <ol className="space-y-2.5">
+            {p.steps.map((s, i) => (
+              <motion.li key={i} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.05 * i }} className="flex gap-3">
+                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-white/[.06] text-[11px] font-semibold text-zinc-300 ring-1 ring-white/10">{i + 1}</span>
+                <div><div className="text-[13px] font-medium text-zinc-100">{s.title}</div><div className="text-[12px] leading-relaxed text-zinc-400">{s.text}</div></div>
+              </motion.li>
+            ))}
+          </ol>
+        </div>
+        <div className="space-y-3">
+          <div className="rounded-2xl bg-black/20 p-4 ring-1 ring-white/[.06]">
+            <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-[.14em] text-zinc-500">What “done” means</div>
+            <ul className="space-y-2">
+              {p.done_rules.map((r, i) => <li key={i} className="flex items-start gap-2 text-[12.5px] leading-snug text-zinc-300"><CircleCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" />{r}</li>)}
+            </ul>
+          </div>
+          <div className="rounded-2xl bg-gradient-to-br from-violet-500/15 to-sky-500/5 p-4 ring-1 ring-violet-400/20">
+            <div className="text-[11px] font-semibold uppercase tracking-[.14em] text-violet-200/80">Estimated price</div>
+            <div className="mt-1 text-[24px] font-semibold tracking-tight text-white">{p.estimate.amount} <span className="text-[14px] font-medium text-zinc-400">EUDemo per {p.estimate.per}</span></div>
+            <div className="mt-1 text-[12px] leading-relaxed text-zinc-400">{p.estimate.note}</div>
+            {p.budget_note && <div className="mt-2 text-[12px] leading-relaxed text-amber-200">{p.budget_note}</div>}
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-x-6 gap-y-2 text-[12.5px] text-zinc-400">
+        <span className="inline-flex items-center gap-1.5"><FileSpreadsheet className="h-3.5 w-3.5 text-zinc-500" />{p.deliverable}</span>
+        <span className="inline-flex items-center gap-1.5"><CalendarClock className="h-3.5 w-3.5 text-zinc-500" />{freq}</span>
+        {p.sources.length > 0 && <span className="inline-flex items-center gap-1.5"><Link2 className="h-3.5 w-3.5 text-zinc-500" />{p.sources.length} source{p.sources.length > 1 ? "s" : ""}: {[...new Set(p.sources.map((s) => s.kind))].join(", ")}</span>}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 border-t border-white/[.06] pt-4">
+        <button onClick={onEdit} className="rounded-xl bg-white/[.06] px-3.5 py-2 text-[13px] font-medium text-zinc-200 ring-1 ring-white/10 transition hover:bg-white/10">Edit request</button>
+        <button onClick={onNew} className="rounded-xl px-3.5 py-2 text-[13px] font-medium text-zinc-400 transition hover:text-zinc-200">Start a new request</button>
+        <span className="ml-auto text-[12px] text-zinc-500">Nothing has run and nothing has been charged.</span>
+      </div>
+    </motion.div>
+  );
+}
+
+function JobRow({ open, onToggle, icon: Icon, tone, title, text, badge, children, id }) {
+  return (
+    <motion.div layout="position" transition={{ duration: 0.4, ease: EASE }} data-job={id}
+      className={`overflow-hidden rounded-2xl ring-1 transition-colors ${open ? "bg-white/[.035] ring-violet-400/30 shadow-[0_0_0_1px_rgba(139,124,255,.08),0_20px_60px_-30px_rgba(124,108,255,.6)]" : "bg-white/[.015] ring-white/[.07] hover:bg-white/[.03] hover:ring-white/15"}`}>
+      <button type="button" onClick={onToggle} className="flex w-full items-center gap-3.5 px-5 py-4 text-left sm:px-6">
+        <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br to-transparent ring-1 ring-white/10 ${tone}`}><Icon className="h-[18px] w-[18px]" strokeWidth={1.8} /></div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2"><span className="text-[15px] font-semibold tracking-tight text-white">{title}</span>{badge}</div>
+          <p className="mt-0.5 text-[12.5px] leading-relaxed text-zinc-400">{text}</p>
+        </div>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform duration-300 ${open ? "rotate-180" : ""}`} />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.35, ease: EASE }}>
+            {children}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+function JobsPanel({ selected, setSelected, ...p }) {
+  const toggle = (k) => setSelected(selected === k ? null : k);
+  return (
+    <motion.section layout="position" transition={{ duration: 0.5, ease: EASE }} className="card card-hero overflow-hidden rounded-3xl">
+      <div className="px-5 pb-4 pt-5 sm:px-7 sm:pt-6">
+        <div className="text-[11px] font-semibold uppercase tracking-[.16em] text-violet-300/80">New job</div>
+        <h2 className="mt-1 text-[20px] font-semibold tracking-tight text-white sm:text-[22px]">Choose a job</h2>
+        <p className="mt-1 text-[14px] text-zinc-400">Hire ClientScope for a ready-made job, or describe your own.</p>
+      </div>
+      <div className="space-y-3 px-3 pb-3 sm:px-4 sm:pb-4">
+        <div className="px-2 pt-1 text-[11px] font-semibold uppercase tracking-[.14em] text-zinc-500">Available now</div>
+        <JobRow id="supplier" open={selected === "supplier"} onToggle={() => toggle("supplier")} icon={FileSpreadsheet} tone="from-emerald-400/25 text-emerald-300"
+          title="Supplier price list to Google Sheet" text="Reads a supplier's live prices and stock into a new Google Sheet, with a full log of every step."
+          badge={<><Pill tone="green" dot pulse>Live</Pill><span className="text-[12px] font-medium text-zinc-400">1 EUDemo</span></>}>
+          <SupplierJob {...p} />
+        </JobRow>
+        <JobRow id="custom" open={selected === "custom"} onToggle={() => toggle("custom")} icon={PenLine} tone="from-violet-400/25 text-violet-300"
+          title="Custom job" text="Describe your own task. ClientScope drafts a plan, clear rules for “done” and a price estimate for you to review."
+          badge={<Pill tone="violet">Your own task</Pill>}>
+          <CustomJob />
+        </JobRow>
+        <div className="px-2 pt-2 text-[11px] font-semibold uppercase tracking-[.14em] text-zinc-500">Coming soon</div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {[[LineChart, "Competitor price watch", "Track rivals' prices and get told when they change."],
+            [PackageSearch, "Stock and reorder alerts", "Get told when stock runs low, with a suggested reorder."]].map(([Icon, t, d]) => (
+            <div key={t} className="flex items-start gap-3 rounded-2xl bg-white/[.01] px-4 py-3.5 border border-dashed border-white/[.08]">
+              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/[.04] text-zinc-500 ring-1 ring-white/[.06]"><Icon className="h-4 w-4" strokeWidth={1.8} /></div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-[13.5px] font-medium text-zinc-300">{t}<span className="rounded-full bg-white/[.05] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Soon</span></div>
+                <div className="mt-0.5 text-[12px] leading-relaxed text-zinc-500">{d}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
       <div className="flex items-start gap-2 border-t border-white/[.06] bg-black/20 px-5 py-3 text-[12px] leading-relaxed text-zinc-500 sm:px-7">
-        <Bot className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-        <span>This demo uses a test buyer that signs on the server. In a live setup, each client signs from their own Concordium wallet. Everything runs on the Concordium test network, so no real money moves.</span>
+        <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <span>Everything runs on the Concordium test network, so no real money moves. With your wallet, you sign the order first and approve the payment only after the work passes its checks.</span>
       </div>
     </motion.section>
   );
@@ -286,14 +557,14 @@ function Checks({ items, failed }) {
   );
 }
 
-function StepTracker({ steps }) {
+function StepTracker({ steps, copy = STEP_COPY }) {
   return (
     <ol className="relative">
       {steps.map((s, i) => {
         const last = i === steps.length - 1;
         const items = (s.items || []).filter((x) => typeof x === "object");
         const active = s.status !== "pending";
-        const [title, hint] = STEP_COPY[s.key] || [s.title, s.hint];
+        const [title, hint] = copy[s.key] || [s.title, s.hint];
         return (
           <motion.li key={s.key} initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.15 + i * 0.05, duration: 0.45, ease: EASE }} className="relative flex gap-3.5 pb-4">
             {!last && (
@@ -329,6 +600,8 @@ const OUTCOME_TITLE = {
   buyer_rejected: "Buyer not verified, so the job was refused",
   agent_refused: "Agent badge not valid, so the buyer walked away",
   error: "Something went wrong, and nothing was charged",
+  payment_declined: "Delivered, but the payment was not approved",
+  cancelled: "Hire cancelled, so nothing was charged",
 };
 
 function Progress({ run, elapsed }) {
@@ -346,7 +619,7 @@ function Progress({ run, elapsed }) {
           {chip}
         </div>
         <p className="mt-1 text-[12px] text-zinc-500">
-          Job <span className="font-mono text-zinc-400">{run.job_id || "…"}</span> · {run.mode === "normal" ? "Real hire" : MODE_COPY[run.mode] || run.mode_label} · started {fmtTime(run.started)} UK
+          Job <span className="font-mono text-zinc-400">{run.job_id || "…"}</span> · {run.mode === "wallet" ? <>Your wallet <span className="font-mono">{short(run.account, 4, 4)}</span></> : run.mode === "normal" ? "Demo buyer" : MODE_COPY[run.mode] || run.mode_label} · started {fmtTime(run.started)} UK
         </p>
         <div className="mt-3 flex items-center gap-2.5">
           <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/[.06]">
@@ -356,15 +629,50 @@ function Progress({ run, elapsed }) {
           <span className="font-mono text-[10.5px] text-zinc-500">{doneCount}/{steps.length}</span>
         </div>
       </header>
-      <div className="px-5 pt-4"><StepTracker steps={steps} /></div>
+      <div className="px-5 pt-4"><StepTracker steps={steps} copy={run.mode === "wallet" ? WALLET_STEP_COPY : STEP_COPY} /></div>
     </section>
   );
 }
 
-function Side({ run, elapsed }) {
+function ApproveCard({ run, wallet, onApprove, onDecline, state }) {
+  const req = run.result?.payment_request;
+  if (!req || run.status !== "running") return null;
+  const sameAccount = wallet.status === "connected" && wallet.account === run.account;
+  return (
+    <motion.section initial={{ opacity: 0, y: 12, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.45, ease: EASE }}
+      className="card overflow-hidden rounded-3xl !border-violet-400/40" data-approve="pending">
+      <div className="bg-gradient-to-br from-violet-500/20 via-transparent to-transparent px-5 py-5">
+        <div className="flex items-start gap-3">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-500 text-white shadow-[0_0_24px_-4px_rgba(139,124,255,.9)]"><Wallet className="h-5 w-5" /></div>
+          <div>
+            <h3 className="text-[15.5px] font-semibold tracking-tight text-white">Delivery passed. Approve the payment</h3>
+            <p className="mt-1 text-[12.5px] leading-relaxed text-zinc-400">Your Sheet passed every check. Approve 1 EUDemo in your wallet to pay ClientScope. ClientScope pays the network fee.</p>
+          </div>
+        </div>
+        <dl className="mt-4 space-y-1.5 rounded-xl bg-black/25 p-3 text-[12.5px] ring-1 ring-white/[.06]">
+          <div className="flex justify-between gap-3"><dt className="text-zinc-500">Amount</dt><dd className="font-medium text-zinc-100">1 EUDemo</dd></div>
+          <div className="flex justify-between gap-3"><dt className="text-zinc-500">To</dt><dd className="font-mono text-[11.5px] text-zinc-300">ClientScope · {short("3qYSik7b8w9NsgeAk91Mrpapq9T5S7EGvmsa3Ecf4449xiJ8cX", 4, 4)}</dd></div>
+          <div className="flex justify-between gap-3"><dt className="text-zinc-500">Reference</dt><dd className="font-mono text-[11.5px] text-zinc-300">{run.job_id}</dd></div>
+          {run.result.payment_request_expires && <div className="flex justify-between gap-3"><dt className="text-zinc-500">Request valid until</dt><dd className="text-zinc-300">{fmtTime(run.result.payment_request_expires)} UK</dd></div>}
+        </dl>
+        {!sameAccount && <p className="mt-3 text-[12px] text-amber-200">Connect the wallet account {short(run.account, 6, 6)} to approve this payment.</p>}
+        <div className="mt-4 flex gap-2">
+          <button onClick={onApprove} disabled={!sameAccount || state === "busy"} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-white px-4 py-2.5 text-[13.5px] font-semibold text-ink-950 transition hover:bg-zinc-200 disabled:opacity-50">
+            {state === "busy" ? <><Spin c="h-4 w-4" /> Check your wallet…</> : <><Wallet className="h-4 w-4" /> Approve in wallet</>}
+          </button>
+          <button onClick={onDecline} disabled={state === "busy"} className="rounded-xl px-3.5 py-2.5 text-[13px] font-medium text-zinc-400 ring-1 ring-white/10 transition hover:text-zinc-200 disabled:opacity-50">Decline</button>
+        </div>
+        {state === "error" && <p className="mt-2 text-[12px] text-amber-200">The wallet did not send the payment. You can try again or decline.</p>}
+      </div>
+    </motion.section>
+  );
+}
+
+function Side({ run, elapsed, approve }) {
   const done = run.status !== "running";
   return (
     <div className="flex flex-col gap-5">
+      {approve && <ApproveCard run={run} {...approve} />}
       {done && <Result run={run} />}
       <Progress run={run} elapsed={elapsed} />
     </div>
@@ -407,9 +715,14 @@ function Result({ run }) {
   const bal = r.balances;
   const title = OUTCOME_TITLE[run.outcome] || "Finished";
   const sub = ok
-    ? "The Sheet passed the delivery check, so the 1 EUDemo payment was released. The log's fingerprint is now stored on Concordium."
+    ? (run.mode === "wallet" ? "The Sheet passed the delivery check, then you approved the 1 EUDemo payment in your wallet. ClientScope checked it on chain and stored the log's fingerprint on Concordium."
+      : "The Sheet passed the delivery check, so the 1 EUDemo payment was released. The log's fingerprint is now stored on Concordium.")
     : run.outcome === "delivery_failed"
       ? "The signed payment was thrown away and never sent. The failure is still logged and its fingerprint stored on chain."
+      : run.outcome === "payment_declined"
+      ? "The work passed its checks, but the payment was not approved in your wallet, so nothing was sent. This is recorded in the Audit Log and anchored on chain."
+      : run.outcome === "cancelled"
+      ? "The signature request was not completed in your wallet, so no work ran and nothing was paid."
       : run.outcome === "error"
         ? `${r.error_detail ? r.error_detail + ". " : ""}No payment was sent, and only ClientScope's fee sponsor can send one.${bal ? " Balances were read back from the chain to prove it." : ""}`
         : "No Sheet, no payment and no transaction. Balances were read back from the chain to prove it.";
@@ -601,7 +914,14 @@ export default function App() {
   const [run, setRun] = useState(null);
   const [err, setErr] = useState(null);
   const [starting, setStarting] = useState(false);
+  const [selected, setSelected] = useState("supplier");
+  const [payWith, setPayWith] = useState("wallet");
+  const [connecting, setConnecting] = useState(false);
+  const [prompt, setPrompt] = useState(null);
+  const [approveState, setApproveState] = useState(null);
   const sideRef = useRef(null);
+  const autoPay = useRef(new Set());   // runs started in this tab: open the wallet automatically when delivery passes
+  const wallet = useWallet();
 
   const loadAgent = async () => {
     setAgentLoading(true);
@@ -642,6 +962,58 @@ export default function App() {
     finally { setStarting(false); }
   };
 
+  const post = (path, body) => fetch(`${API}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const errText = (status, detail) => status === 409 ? "Another hire is already running. Please try again in a moment."
+    : detail ? `Couldn't start the job: ${detail}.` : "Couldn't start the job. Please try again.";
+
+  const connect = async () => {
+    setErr(null); setConnecting(true);
+    try { await wallet.connect(); }
+    catch { setErr("The wallet did not connect. Open the Concordium Wallet, unlock it and try again."); }
+    finally { setConnecting(false); }
+  };
+
+  const hireWallet = async () => {
+    setErr(null); setStarting(true);
+    let runId = null;
+    try {
+      const r = await post("/api/wallet/start", { account: wallet.account });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { setErr(errText(r.status, d.detail)); return; }
+      runId = d.run_id;
+      history.replaceState(null, "", `?run=${runId}`);
+      setRun({ id: runId, mode: "wallet", account: wallet.account, status: "running", steps: IDLE_STEPS, audit: [], console: [], result: {}, started: new Date().toISOString() });
+      follow(runId);
+      if (d.refused) return;
+      autoPay.current.add(runId);
+      if (window.innerWidth < 1024) setTimeout(() => sideRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 350);
+      setPrompt("Check your wallet: sign ClientScope's one-time challenge to confirm the order. Nothing is paid yet.");
+      let signature;
+      try { signature = await wallet.signMessage(wallet.account, d.message); }
+      catch { await post("/api/wallet/stop", { run_id: runId }).catch(() => {}); setErr("You closed the signature request, so the hire was cancelled. Nothing was paid."); return; }
+      setPrompt("Checking your signature and account on Concordium…");
+      const v = await post("/api/wallet/verify", { run_id: runId, signature });
+      if (!v.ok) setErr("ClientScope could not check your signature. Please try again.");
+    } catch { setErr("Couldn't reach the server. Check your connection and try again."); }
+    finally { setStarting(false); setPrompt(null); }
+  };
+
+  const approve = async () => {
+    if (!run?.result?.payment_request) return;
+    setApproveState("busy");
+    try {
+      const hash = await wallet.approvePayment(wallet.account, run.result.payment_request);
+      const r = await post("/api/wallet/pay", { run_id: run.id, tx_hash: hash });
+      setApproveState(r.ok ? null : "error");
+    } catch { setApproveState("error"); }
+  };
+  const decline = async () => { setApproveState(null); await post("/api/wallet/stop", { run_id: run.id }).catch(() => {}); };
+  useEffect(() => {
+    if (run?.mode === "wallet" && run.status === "running" && run.result?.payment_request && autoPay.current.has(run.id) && wallet.account === run.account) {
+      autoPay.current.delete(run.id); approve();
+    }
+  }, [run?.result?.payment_request]);
+
   const elapsed = useElapsed(run);
   const busy = run?.status === "running" || health.busy;
   const hasRun = !!run;
@@ -667,10 +1039,11 @@ export default function App() {
           <main data-run-status={run ? (run.status === "running" ? "running" : (run.finished ? "finished" : "ending")) : "idle"} data-run-outcome={run?.outcome || ""}
             className={`mx-auto grid items-start gap-5 px-5 pb-20 sm:px-6 ${hasRun ? "max-w-[1240px] lg:grid-cols-[minmax(0,1fr)_400px]" : "max-w-[860px]"}`}>
             <div className="flex min-w-0 flex-col gap-5">
-              <NewJob agent={agent} agentErr={agentErr} agentLoading={agentLoading} onRefresh={loadAgent} modes={modes} mode={mode} setMode={setMode}
-                onHire={hire} busy={busy} starting={starting} serverReady={health.x402_server} err={err} />
+              <JobsPanel selected={selected} setSelected={setSelected} agent={agent} agentErr={agentErr} agentLoading={agentLoading} onRefresh={loadAgent}
+                modes={modes} mode={mode} setMode={setMode} payWith={payWith} setPayWith={setPayWith} wallet={wallet} onConnect={connect} connecting={connecting}
+                onHire={hire} onHireWallet={hireWallet} busy={busy} starting={starting} serverReady={health.x402_server} err={err} prompt={prompt} />
               {/* on narrow screens the progress sits right under New Job */}
-              {hasRun && <div ref={sideRef} className="scroll-mt-4 lg:hidden"><Side run={run} elapsed={elapsed} /></div>}
+              {hasRun && <div ref={sideRef} className="scroll-mt-4 lg:hidden"><Side run={run} elapsed={elapsed} approve={{ wallet, onApprove: approve, onDecline: decline, state: approveState }} /></div>}
               {run?.result?.products && <Products rows={run.result.products} />}
               <AuditLog rows={run?.audit || []} source={run?.audit_source} running={run?.status === "running"} outcome={run?.outcome} hasRun={hasRun} />
               {run && <Console lines={run.console || []} />}
@@ -680,7 +1053,7 @@ export default function App() {
               {hasRun && (
                 <motion.aside key="side" initial={{ opacity: 0, x: 48 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 48 }} transition={{ duration: 0.6, ease: EASE }}
                   className="hidden min-w-0 lg:block">
-                  <Side run={run} elapsed={elapsed} />
+                  <Side run={run} elapsed={elapsed} approve={{ wallet, onApprove: approve, onDecline: decline, state: approveState }} />
                 </motion.aside>
               )}
             </AnimatePresence>

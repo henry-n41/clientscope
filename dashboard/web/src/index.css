@@ -52,3 +52,6 @@ select option { background: #0e111a; color: #e4e4e7; }
 @media (prefers-reduced-motion: reduce) {
   .aurora-a, .aurora-b, .btn-shine::after, .pulse-ring, .row-in { animation: none !important; }
 }
+
+input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input[type=number] { -moz-appearance: textfield; }

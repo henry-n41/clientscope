@@ -17,6 +17,7 @@ import { Cbor, CborMemo } from "@concordium/web-sdk";
 import { grpc, txStatus } from "./chain.mjs";
 import { issueChallenge, verifyBuyer, sessionFor, BUYER_POLICY } from "./buyer_check.mjs";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { registerWalletRoutes } from "./wallet_flow.mjs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -204,6 +205,10 @@ app.post("/jobs/scrape", async (req, res) => {
   }
   res.json({ job_id: req.body.jobId, status: "delivered", sheet_url: r.sheet_url, check: c, payment: "settles after this response is approved (see PAYMENT-RESPONSE header)" });
 });
+
+// Feature 6: buyers who approve with their own Concordium Browser Wallet (see wallet_flow.mjs for why the flow differs).
+registerWalletRoutes(app, { log, py, anchorJob, grpc, txStatus, issueChallenge, verifyBuyer, sessionFor, buyerLog, now, usedJobIds,
+  sponsorKey: process.env.CCD_SPONSOR_PRIVATE_KEY });
 
 // Bind host: all interfaces by default (as before); set CLIENTSCOPE_X402_HOST=127.0.0.1 to keep the job server private
 // when it runs behind the dashboard on a host such as Render (only the dashboard's $PORT is public there).
