@@ -7,3 +7,4 @@ Never edit these files by hand. They are generated and pinned by the scripts in 
 | File | Agent | On-chain record |
 |------|-------|-----------------|
 | `client-agent-card.json` | Northgate Supplies Buyer Agent (demo), agent #1211 | https://agent-registry-mcp.concordium.com/v1/badge-check/JyP9XR6EkrzHnx9g177u9 |
+| `agent-card.json` | ClientScope Work Agent, agent #1010 (pinned once Henry approves the update) | https://agent-registry-mcp.concordium.com/v1/badge-check/JyP9YTHUc6YFEXRdx9HKH |
