@@ -2,7 +2,7 @@
   "type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
   "name": "Northgate Supplies Buyer Agent (demo)",
   "description": "Buyer agent for Northgate Supplies (demo). Hires work agents over x402 and pays in EUDemo only on delivery. Before hiring, it checks the work agent's Concordium badge, card hash and Active status, then makes the work agent sign a fresh challenge with a key that controls its registered account. It proves its own identity the same way: it signs ClientScope's challenge with the key of this agent's owner account.",
-  "url": "https://henry-n41.github.io/clientscope-supplier-demo/client-agent-card.json",
+  "url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/client-agent-card.json",
   "version": "1.1.0",
   "provider": {
     "organization": "Strapnode",
