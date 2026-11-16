@@ -38,6 +38,8 @@ const MODE_COPY = {
   impostor: "An impostor tries to hire using the wrong key",
   not_allowlisted: "A buyer who is not approved to pay in EUDemo",
   bad_card: "The agent's ID card has been tampered with",
+  unregistered_buyer: "A real, approved buyer account with no registered agent",
+  fake_supplier: "A fake ClientScope copies the real ID card but has the wrong key",
 };
 
 const short = (s, a = 8, b = 6) => (s && s.length > a + b + 1 ? `${s.slice(0, a)}…${s.slice(-b)}` : s || "");

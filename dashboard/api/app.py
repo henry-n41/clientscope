@@ -51,8 +51,8 @@ now_iso = lambda: datetime.datetime.now(datetime.timezone.utc).isoformat(timespe
 
 # ---------------------------------------------------------------- run state
 STEPS = [
-    ("badge", "Check agent badge", "Buyer agent checks ClientScope's Concordium badge and Agent Card hash"),
-    ("buyer", "Verify buyer", "ClientScope checks the buyer's signed challenge, identity and allow list"),
+    ("badge", "Check agent badge", "Buyer agent checks ClientScope's Concordium badge and Agent Card hash, then ClientScope signs the buyer's fresh nonce"),
+    ("buyer", "Verify buyer", "ClientScope checks the buyer agent's own badge, its signed challenge, identity and allow list"),
     ("hold", "Hold payment", "x402: buyer signs 1 EUDemo, ClientScope verifies it but does not submit"),
     ("scrape", "Scrape supplier", "Read the supplier's price page"),
     ("sheet", "Build Google Sheet", "Products and Audit Log written to a new sheet"),
@@ -66,6 +66,8 @@ MODES = {
     "impostor": (["--simulate-unverified-buyer", "impostor"], "Impostor buyer (wrong key)"),
     "not_allowlisted": (["--simulate-unverified-buyer", "not-allowlisted"], "Buyer not on the EUDemo allow list"),
     "bad_card": (["--simulate-bad"], "Tampered Agent Card"),
+    "unregistered_buyer": (["--simulate-unverified-buyer", "unregistered"], "Buyer is not a registered agent"),
+    "fake_supplier": (["--simulate-fake-supplier", "wrong-key"], "Fake ClientScope with a copied card"),
     "wallet": ([], "Your Concordium wallet"),     # Feature 6: not a client_agent.py mode; driven by /api/wallet/*
 }
 
@@ -271,7 +273,7 @@ def on_agent_line(r: Run, raw: str):
     elif "DECISION: HIRED" in s:
         r.step("badge", "done", r.result.get("badge_summary", "Verified by Concordium"))
     elif "DECISION: REFUSED" in s:
-        r.step("badge", "failed", "Badge check failed: the buyer agent refused to hire. Nothing ran, nothing was paid.")
+        r.step("badge", "failed", "Badge or handshake check failed: the buyer agent refused to hire. Nothing ran, nothing was paid.")
         r.outcome = "agent_refused"
     elif m := re.search(r"challenge for job (CS-[0-9A-Z-]+)", s):
         r.job_id = m.group(1); r.bump()
@@ -283,6 +285,8 @@ def on_agent_line(r: Run, raw: str):
         why = ("The signature does not match the account's on-chain keys, so this is not the real account holder"
                if "challenge_signed" in failed and "account_exists" not in failed else
                "The account is not on the EUDemo allow list" if failed == ["eudemo_allow_listed"] else
+               "The buyer is not a registered agent on Concordium's Agent Registry" if failed and "buyer_agent_registered" in failed else
+               "The buyer's key does not control the registered agent it claims" if failed == ["buyer_agent_controlled_by_signer"] else
                "Failed: " + ", ".join(f.replace("_", " ") for f in failed))
         r.step("buyer", "failed", "Rejected before any payment. " + why)
         r.outcome = "buyer_rejected"
@@ -670,6 +674,8 @@ def wallet_verify(req: WalletVerifyReq):
         failed = v.get("failed") or []
         why = ("The signature does not match the account's on-chain keys" if "challenge_signed" in failed and "account_exists" not in failed else
                "The account is not on the EUDemo allow list" if failed == ["eudemo_allow_listed"] else
+               "The buyer is not a registered agent on Concordium's Agent Registry" if failed and "buyer_agent_registered" in failed else
+               "The buyer's key does not control the registered agent it claims" if failed == ["buyer_agent_controlled_by_signer"] else
                "The account holds less than 1 EUDemo" if failed == ["has_funds"] else
                "Failed: " + ", ".join(CHECK_LABELS.get(f, f).lower() for f in failed))
         r.step("buyer", "failed", "Not verified, so nothing was asked of your wallet. " + why)

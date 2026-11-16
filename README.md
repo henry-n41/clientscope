@@ -10,8 +10,8 @@ Built for the **Concordium Trusted Agents hackathon** with **Encode Club**. Ever
 
 A small business wants its supplier's latest prices and stock levels in a spreadsheet. It hires ClientScope for that one job:
 
-1. The buyer's agent checks that ClientScope is a registered, verified agent on Concordium before hiring it.
-2. ClientScope checks the buyer too: who is asking, and whether they are allowed to pay.
+1. The buyer's agent (itself registered on Concordium as agent #1211) checks that ClientScope is a registered, verified agent (#1010), then makes ClientScope sign a fresh nonce with a key that controls #1010, so a copied Agent Card is worthless.
+2. ClientScope checks the buyer too: its registered agent badge, card hash and Active status, a fresh challenge signed by the key that controls that agent, who is asking, and whether they are allowed to pay.
 3. The buyer signs a payment of 1 EUDemo (a test euro stablecoin). ClientScope holds it but does not take it yet.
 4. ClientScope reads the supplier's price page ([Northgate Supplies demo site](https://henry-n41.github.io/clientscope-supplier-demo/)), creates a new Google Sheet by itself in the client's Google Drive, and writes a Products tab and an Audit Log tab.
 5. A delivery check re-opens the sheet and compares it with the supplier page. Only if it passes is the payment submitted. If it fails, the signed payment is thrown away and the buyer is not charged.

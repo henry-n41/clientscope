@@ -16,6 +16,7 @@ import { toConcordiumFacilitatorSigner } from "@x402/concordium";
 import { Cbor, CborMemo } from "@concordium/web-sdk";
 import { grpc, txStatus } from "./chain.mjs";
 import { issueChallenge, verifyBuyer, sessionFor, BUYER_POLICY } from "./buyer_check.mjs";
+import { CLIENTSCOPE_AGENT_ID, signHandshake } from "./agent_trust.mjs";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { registerWalletRoutes } from "./wallet_flow.mjs";
 import { dirname, join } from "node:path";
@@ -112,7 +113,7 @@ const resourceServer = new x402ResourceServer({
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
-app.get("/health", (_q, r) => r.json({ ok: true, network: NETWORK, asset: ASSET, price: PRICE_ATOMIC, payTo: CLIENTSCOPE_PAYTO, sponsor: SPONSOR_ADDRESS, flow: "pay-on-delivery" }));
+app.get("/health", (_q, r) => r.json({ ok: true, network: NETWORK, asset: ASSET, price: PRICE_ATOMIC, payTo: CLIENTSCOPE_PAYTO, sponsor: SPONSOR_ADDRESS, flow: "pay-on-delivery", agent: `#${CLIENTSCOPE_AGENT_ID}`, handshake_signer: HANDSHAKE_SIGNER }));
 
 function decodePayment(h) {
   const payload = JSON.parse(Buffer.from(h, "base64").toString("utf8"));
@@ -125,11 +126,28 @@ function decodePayment(h) {
 const buyerLog = (entry) => appendFileSync(join(BUILD_LOG, "buyer-checks.jsonl"), JSON.stringify(entry) + "\n");
 app.get("/buyer/policy", (_q, r) => r.json(BUYER_POLICY));
 app.post("/buyer/challenge", (req, res) => {
-  try { const c = issueChallenge(req.body.account, req.body.jobId); log(`buyer challenge issued: job=${req.body.jobId} account=${req.body.account.slice(0, 10)}... nonce=${c.nonce.slice(0, 8)}...`); res.json(c); }
+  try { const c = issueChallenge(req.body.account, req.body.jobId, "", req.body.agentId ?? null); log(`buyer challenge issued: job=${req.body.jobId} account=${req.body.account.slice(0, 10)}... agent=#${req.body.agentId ?? "none"} nonce=${c.nonce.slice(0, 8)}...`); res.json(c); }
   catch (e) { res.status(400).json({ error: "bad_account" }); }
 });
+// Gap 2: ClientScope proves to a buyer agent that it controls registered agent #1010, by signing the BUYER's fresh nonce
+// with its operating account key (an operator approved on the registry by #1010's owner; the buyer checks that on chain).
+const HANDSHAKE_SIGNER = process.env.CLIENTSCOPE_HANDSHAKE_SIGNER || SPONSOR_ADDRESS;
+const HANDSHAKE_KEY = process.env[process.env.CLIENTSCOPE_HANDSHAKE_KEY_ENV || "CCD_SPONSOR_PRIVATE_KEY"];
+// Rehearsal only (local test runs): sign as another registered agent, e.g. #1211 with its owner key. Never set in production.
+const HANDSHAKE_AGENT = BigInt(process.env.CLIENTSCOPE_HANDSHAKE_AGENT_ID || CLIENTSCOPE_AGENT_ID);
+const handshakeNonces = new Set();
+app.post("/agent/handshake", async (req, res) => {
+  const { nonce, jobId, fromAgent } = req.body || {};
+  if (!/^[0-9a-f]{32,64}$/i.test(String(nonce || "")) || !/^CS-[0-9A-Za-z-]{1,40}$/.test(String(jobId || "")) || !/^[0-9]{1,20}$/.test(String(fromAgent ?? ""))) return res.status(400).json({ error: "bad_request" });
+  if (handshakeNonces.has(nonce)) return res.status(409).json({ error: "nonce_already_used" });
+  if (handshakeNonces.size > 10000) handshakeNonces.clear();
+  handshakeNonces.add(nonce);
+  const h = await signHandshake({ agentId: HANDSHAKE_AGENT, signerAddress: HANDSHAKE_SIGNER, keyHex: HANDSHAKE_KEY, toAgent: fromAgent, nonce, jobId });
+  log(`agent handshake signed for buyer agent #${fromAgent}: job=${jobId} nonce=${nonce.slice(0, 8)}... signer=${HANDSHAKE_SIGNER.slice(0, 10)}...`);
+  res.json(h);
+});
 app.post("/buyer/verify", async (req, res) => {
-  const r = await verifyBuyer(grpc(), req.body);
+  const r = await verifyBuyer(grpc(), req.body, { requireAgent: true });
   const short = Object.entries(r.checks).map(([k, v]) => `${k}=${v}`).join(" ");
   log(`buyer ${r.verified ? "VERIFIED" : "REJECTED"}: ${req.body.account?.slice(0, 10)}... ${short}`);
   const { session, ...pub } = r;
@@ -185,6 +203,7 @@ app.post("/jobs/scrape", async (req, res) => {
   const auditRows = [
     ...(req.body.audit_rows || []),
     [t, "buyer_verified", `account=${b.facts.account} challenge signed + checked on chain: identity_provider=${b.facts.identity_provider?.id} (${b.facts.identity_provider?.name}) credential_valid_to=${b.facts.credential_valid_to} anonymity_revokers=${b.facts.anonymity_revokers} eudemo_allow_listed=true policy="${b.policy}"`],
+    [t, "buyer_agent_verified", `by=ClientScope buyer agent #${b.facts.buyer_agent?.token_id} (${b.facts.buyer_agent?.token_address}) "${b.facts.buyer_agent?.name}" status=${b.facts.buyer_agent?.status} card_sha256=${b.facts.buyer_agent?.card_sha256} == on-chain metadata_hash, registry badge_valid=true, fresh challenge signed by its ${b.facts.buyer_agent?.signer_is} account ${b.facts.account}`],
     [t, "payment_required", `x402 402: ${fmt(PRICE_ATOMIC)} ${ASSET} (atomic ${PRICE_ATOMIC}) to payTo=${CLIENTSCOPE_PAYTO}, pay on delivery`],
     [t, "payment_authorized", `signed sponsored payment verified, NOT submitted: payer=${h.sender} nonce=${h.nonce} memo=${req.paymentMemo} expires=${new Date(h.expiry * 1000).toISOString().slice(0, 19).replace("T", " ")} UTC`],
   ];
