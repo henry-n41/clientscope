@@ -1,0 +1,12 @@
+{
+ "lookalike": {
+  "token_id": "1230",
+  "token_address": "JyP9XmtPTMTvZKfVnprk4",
+  "owner": "3N9s8YUN2pxMuP5bszXUUk9vZ3ks7tDgxgzhG5arGr5qGYe6fn",
+  "register_tx": "a6f976db2f8ce6953378a7f8f97a8dab8d18ccd2a18147683fe4211b5e750836",
+  "card_url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/lookalike/agent-card.json",
+  "card_sha256": "c1388261e41c547376d682263cf718a71bf5ff6f82006a216e189e8b1eb1d26e",
+  "set_uri_tx": "d1fe03e4cf1fdb1aacc36943c4adeb37fe6fbc3805027835ff676b1a63bc5dc4",
+  "site": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/lookalike/"
+ }
+}

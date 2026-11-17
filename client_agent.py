@@ -12,6 +12,8 @@ REGISTRY = "https://agent-registry-mcp.concordium.com"
 MCP_URL = f"{REGISTRY}/mcp"
 REQUIRED_SKILL = "scrape-to-sheet"
 SUPPLIER_URL = "https://henry-n41.github.io/clientscope-supplier-demo/"
+LOOKALIKE_SITES = {"claims-site": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/lookalike/",
+                   "copied-proof": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/lookalike-copy/"}
 
 OK, BAD = "\u2705", "\u274c"
 now = lambda: datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -74,6 +76,12 @@ def main():
                     help="LIVE KILL SWITCH: hire as a THROWAWAY demo agent from x402/killswitch_pool.json; once the job is running, its owner "
                          "revokes the agent on chain (automatically, or when /tmp/clientscope-kill-<job_id> appears). ClientScope must halt, "
                          "charge nothing, and anchor a halt receipt naming the revoke transaction. Never touches #1010 or #1211.")
+    ap.add_argument("--simulate-lookalike-supplier", nargs="?", const="claims-site", choices=["claims-site", "copied-proof"],
+                    help="DOMAIN PROOF: send ClientScope a lookalike 'Northgate Supplies' page. 'claims-site' has its own real badge whose card "
+                         "claims the real supplier's website; 'copied-proof' copies the real page and the real proof file byte for byte. "
+                         "ClientScope must refuse before any 402, because the site, account and badge do not all point to each other.")
+    ap.add_argument("--require-domain-proof", action="store_true",
+                    help="Ask ClientScope to refuse any supplier site that does not publish a valid domain proof.")
     ap.add_argument("--direct", action="store_true",
                     help="Legacy: run the job without the x402 payment step.")
     args = ap.parse_args()
@@ -242,7 +250,11 @@ def main():
         job_url = SUPPLIER_URL + ("this-page-does-not-exist/" if args.simulate_delivery_fail else "")
         if args.simulate_delivery_fail:
             say(f"\n  MODE: --simulate-delivery-fail (job URL is broken: {job_url})")
-        req = {"jobId": job_id, "url": job_url, "client": "Northgate Supplies (demo)", "audit_rows": audit_rows}
+        if args.simulate_lookalike_supplier:
+            job_url = LOOKALIKE_SITES[args.simulate_lookalike_supplier]
+            say(f"\n  MODE: --simulate-lookalike-supplier {args.simulate_lookalike_supplier} (job URL is a lookalike: {job_url})")
+        req = {"jobId": job_id, "url": job_url, "client": "Northgate Supplies (demo)", "audit_rows": audit_rows,
+               "require_domain_proof": bool(args.require_domain_proof or args.simulate_lookalike_supplier)}
         here = os.path.dirname(os.path.abspath(__file__))
         env = dict(os.environ)
         if args.simulate_unverified_buyer:
@@ -295,6 +307,16 @@ def main():
             say("=" * 64, 0)
             if result.get("sheet_url"): verify_anchor(result["sheet_url"])
             sys.exit(8 if result.get("ok") else 6)
+        if result and result.get("domain_refused"):
+            d = result.get("domain") or {}
+            json.dump(trust, open("trust_check.json", "w"), indent=2)
+            say("\n" + "=" * 64, 0)
+            say(f"  {OK} LOOKALIKE SUPPLIER REFUSED before any payment: {d.get('site')}")
+            say(f"      failed: {', '.join(d.get('failed', []))}")
+            say(f"  {OK if result.get('ok') else BAD} buyer charged 0 EUDemo, 0 CCD; nothing was signed")
+            if (result.get("anchor") or {}).get("tx_hash"): say(f"  Refusal anchored: https://ccdexplorer.io/testnet/transaction/{result['anchor']['tx_hash']}")
+            say("=" * 64, 0)
+            sys.exit(10 if result.get("ok") else 6)
         if result and result.get("buyer_rejected"):
             json.dump(trust, open("trust_check.json", "w"), indent=2)
             say("\n" + "=" * 64, 0)

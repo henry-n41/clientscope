@@ -162,7 +162,8 @@ let res;
 try {
   res = await payFetch(`http://localhost:${PORT}/jobs/scrape`, {
     method: "POST", headers: { "content-type": "application/json", "x-buyer-session": BUYER_SESSION },
-    body: JSON.stringify({ jobId, url: job.url, client: job.client, audit_rows: job.audit_rows || [], demo_pace: !!process.env.CLIENTSCOPE_DEMO_PACE }),
+    body: JSON.stringify({ jobId, url: job.url, client: job.client, audit_rows: job.audit_rows || [], demo_pace: !!process.env.CLIENTSCOPE_DEMO_PACE,
+      require_domain_proof: !!job.require_domain_proof, expect_supplier_agent: job.expect_supplier_agent ?? null }),
   });
 } catch (e) {
   say(`      ${BAD} Payment not made: ${e.message}`);
@@ -177,6 +178,21 @@ const payToAfter = await balances(chain, CLIENTSCOPE_PAYTO);
 out.balances = { before: { client: before, sponsor: sponsorBefore, clientscope: payToBefore }, after: { client: after, sponsor: sponsorAfter, clientscope: payToAfter } };
 const line = (n, b, a) => say(`      ${n.padEnd(12)} EUDemo ${fmt(b.eudemoAtomic)} -> ${fmt(a.eudemoAtomic)}   CCD ${fmt(b.ccdMicro)} -> ${fmt(a.ccdMicro)}   nonce ${b.nonce} -> ${a.nonce}`);
 stopMyWatch?.();
+if (res.status === 403 && body.status === "supplier_domain_refused") {
+  const d = body.domain || {};
+  say(`      ${OK} ClientScope REFUSED the supplier site before any 402: its website, account and badge do not point to each other`);
+  for (const st of d.steps || []) say(`      ${st.pass ? OK : BAD} ${st.label}: ${st.detail}`);
+  if (body.anchor?.tx_hash) say(`      refusal anchored on Concordium: ${explorerTx(body.anchor.tx_hash)}`);
+  say(`\n      On-chain proof (read back from the Concordium node):`);
+  line("client", before, after); line("sponsor", sponsorBefore, sponsorAfter); line("clientscope", payToBefore, payToAfter);
+  const clientSame = before.eudemoAtomic === after.eudemoAtomic && before.ccdMicro === after.ccdMicro && before.nonce === after.nonce;
+  const csSame = payToBefore.eudemoAtomic === payToAfter.eudemoAtomic && payToBefore.nonce === payToAfter.nonce;
+  const sponsorTx = Number(sponsorAfter.nonce) - Number(sponsorBefore.nonce);
+  const ok = clientSame && csSame && sponsorTx <= 1 && sponsorBefore.eudemoAtomic === sponsorAfter.eudemoAtomic;
+  say(`      ${ok ? OK : BAD} Buyer unchanged (nothing signed, nothing paid), ClientScope unchanged; the operator's only transaction is the refusal anchor (${sponsorTx})`);
+  out.ok = ok; out.charged = false; out.domain_refused = true; out.domain = d; out.anchor = body.anchor;
+  console.log("RESULT " + JSON.stringify(out)); process.exit(ok ? 10 : 6);
+}
 if (res.status === 409 && body.status === "halted_agent_revoked") {
   const hh = body.halt || {};
   say(`      ${OK} ClientScope HALTED the job: buyer agent #${hh.token_id} was revoked on chain mid-job (HTTP 409)`);

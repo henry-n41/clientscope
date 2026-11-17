@@ -1,0 +1,40 @@
+// Domain proof scene, through the real dashboard: one click checks the real supplier next to the lookalike,
+// then Tamper and Restore on the real proof. Captures each stage and prints the verdicts and anchor links.
+import { chromium } from "playwright-core";
+import { mkdirSync } from "node:fs";
+const OUT = "/workspace/clientscope/build-log/domainproof/";
+mkdirSync(OUT, { recursive: true });
+const BASE = process.env.BASE || "http://127.0.0.1:8000/";
+const TAG = process.env.TAG || "local";
+const b = await chromium.launch({ executablePath: "/usr/bin/google-chrome", args: ["--no-sandbox"] });
+const p = await b.newPage({ viewport: { width: 1440, height: 1100 }, deviceScaleFactor: 2 });
+await p.goto(BASE, { waitUntil: "networkidle" });
+await p.waitForSelector("text=Job server online", { timeout: 120000 });
+await p.click("[data-job=domain] > button");
+const scene = await p.waitForSelector("[data-domain-scene] >> visible=true");
+await p.waitForTimeout(1500);
+await scene.screenshot({ path: OUT + `scene-${TAG}-1-idle.png` });
+const verdicts = async () => p.$$eval("[data-domain-side]", (els) => els.filter((e) => e.offsetParent).map((e) => [e.dataset.domainSide, e.dataset.verdict]));
+const anchors = async () => p.$$eval("[data-domain-side] a[href*='ccdexplorer']", (as) => as.map((a) => a.href));
+const settle = async (n) => {
+  await p.waitForFunction((n) => [...document.querySelectorAll("[data-domain-side]")].filter((e) => !["idle", "checking"].includes(e.dataset.verdict)).length >= n, n, { timeout: 120000 });
+  await p.waitForFunction(() => !document.body.innerText.includes("Anchoring this verdict"), null, { timeout: 180000 });
+  await p.waitForTimeout(800);
+};
+await p.click("[data-domain-run]");
+await p.waitForTimeout(1800);
+await scene.screenshot({ path: OUT + `scene-${TAG}-2-ticking.png` });
+await settle(2);
+await scene.screenshot({ path: OUT + `scene-${TAG}-3-verdicts.png` });
+console.log("verdicts", JSON.stringify(await verdicts()), "anchors", JSON.stringify(await anchors()));
+await p.click("[data-domain-tamper]");
+await p.waitForTimeout(1500);
+await settle(2);
+await scene.screenshot({ path: OUT + `scene-${TAG}-4-tampered.png` });
+console.log("tampered", JSON.stringify(await verdicts()), "anchors", JSON.stringify(await anchors()));
+await p.click("[data-domain-restore]");
+await p.waitForTimeout(1500);
+await settle(2);
+await scene.screenshot({ path: OUT + `scene-${TAG}-5-restored.png` });
+console.log("restored", JSON.stringify(await verdicts()), "anchors", JSON.stringify(await anchors()));
+await b.close();

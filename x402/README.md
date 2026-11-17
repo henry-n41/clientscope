@@ -171,3 +171,35 @@ It only ever uses THROWAWAY agents from `killswitch_pool.json` (owned by the dem
 #1010 or #1211, any agent outside the pool, any agent not owned by the demo buyer, and any agent already revoked.
 Top up the pool on the box: `node killswitch.mjs provision 8`, then push the cards on the `agent-cards` branch.
 Tests: `node test_killswitch.mjs` (no transactions) and `node test_killswitch.mjs --live` (one real revoke).
+
+
+## Domain proof: the real supplier vs a lookalike
+
+Before ClientScope reads a supplier page (and before it sends any 402), `domain_proof.mjs` checks that the site,
+its Concordium account and its CIS-8004 badge all point to each other:
+
+1. the site publishes `/.well-known/concordium-agent.json`
+2. the proof names this exact site (a copied proof names the site it was copied from)
+3. its signature matches the named account's keys, read from chain (Concordium signMessage)
+4. the named badge is owned by that account
+5. the badge is Active and its card hashes to the on-chain value
+6. the card's `provider.url` is this site, and if it claims another site, that site's proof must name this badge
+7. optional: the buyer pins the supplier badge it expects (`expect_supplier_agent`)
+
+A site that publishes a proof must pass it. A site with no proof is "unproven": allowed by default and refused when
+the buyer sends `require_domain_proof`. Refusals answer 403 `supplier_domain_refused` before any 402, so nothing is
+signed or paid, and the refusal is anchored on Concordium (RegisterData, result `domain_refused`).
+
+Demo pieces: the real proof for badge #1211 is in `supplier-proof/` (to be published on the supplier site, see
+its README). The lookalike "Northgate Supplies" is a real badge, #1230, owned by the demo operator account 3N9s8
+(the stand-in attacker), with a validly signed proof, hosted on the agent-cards branch (`lookalike/`). A second
+lookalike copies the real page and the real proof byte for byte (`lookalike-copy/`). Both are refused.
+
+    node domain_proof.mjs verify <site> [--require] [--expect 1211] [--tamper]
+    node test_domainproof.mjs [--live]
+    python client_agent.py --simulate-lookalike-supplier [claims-site|copied-proof]
+
+Dashboard: the "Domain proof: real supplier vs lookalike" job checks both sites side by side, with Tamper and
+Restore for the real proof (Tamper alters the downloaded copy before checking, as an attacker on the wire or a
+hacked web host would), and anchors each verdict. The hire scenario "A lookalike supplier site" runs a full hire
+against the lookalike. Note: github.io project sites share one host, so this proof is scoped to the site's path.

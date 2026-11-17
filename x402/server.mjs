@@ -18,6 +18,8 @@ import { grpc, txStatus } from "./chain.mjs";
 import { issueChallenge, verifyBuyer, sessionFor, BUYER_POLICY } from "./buyer_check.mjs";
 import { CLIENTSCOPE_AGENT_ID, signHandshake, readAgent } from "./agent_trust.mjs";
 import { watchAgent, inPool } from "./killswitch.mjs";
+import { verifyDomain, anchorVerdict, normSite, REAL_SUPPLIER_SITE, LOOKALIKE_SITE, LOOKALIKE_COPY_SITE } from "./domain_proof.mjs";
+const DEMO_SITES = new Set([REAL_SUPPLIER_SITE, LOOKALIKE_SITE, LOOKALIKE_COPY_SITE]);
 import { appendFileSync, existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { registerWalletRoutes } from "./wallet_flow.mjs";
@@ -139,6 +141,15 @@ app.use(express.json({ limit: "256kb" }));
 // Kill switch: a public, read-only job stage so the agent's owner (or the dashboard) knows when the job is running.
 const jobStates = new Map();
 app.get("/jobs/state/:jobId", (req, res) => { const st = jobStates.get(req.params.jobId); res.status(st ? 200 : 404).json(st || { stage: "unknown" }); });
+app.post("/supplier/verify", async (req, res) => {
+  const { url, tamper, require: requireProof, expect, anchor } = req.body || {};
+  try {
+    const v = await verifyDomain(grpc(), url, { tamper: !!tamper, requireProof: !!requireProof, expectAgent: expect ?? undefined });
+    log(`DOMAIN PROOF check${tamper ? " (TAMPERED copy)" : ""}: ${v.verdict.toUpperCase()} ${v.site} -> ${domainLine(v)}`);
+    const a = anchor && DEMO_SITES.has(normSite(url)) && !v.facts.mirror ? await anchorDomainVerdict(v, `DP-${new Date().toISOString().slice(0, 10)}`) : null;
+    res.json({ ...v, anchor: a && { tx_hash: a.tx_hash, explorer: a.explorer, block_time: a.block_time } });
+  } catch (e) { res.status(400).json({ error: String(e.message || e) }); }
+});
 app.get("/health", (_q, r) => r.json({ ok: true, network: NETWORK, asset: ASSET, price: PRICE_ATOMIC, payTo: CLIENTSCOPE_PAYTO, sponsor: SPONSOR_ADDRESS, flow: "pay-on-delivery", agent: `#${CLIENTSCOPE_AGENT_ID}`, handshake_signer: HANDSHAKE_SIGNER }));
 
 function decodePayment(h) {
@@ -191,6 +202,39 @@ app.use("/jobs/scrape", (req, res, next) => {
   req.buyer = s.result; next();
 });
 
+// DOMAIN PROOF: before any 402 (so before the buyer signs anything), the supplier site, its Concordium account and its
+// badge must point to each other. A site that publishes a proof must pass it; a site with no proof is "unproven" and is
+// refused only when the buyer asks for require_domain_proof.
+const domainByJob = new Map();
+const verdictAnchors = new Map(); // verdict_sha256 -> anchor (the same verdict is anchored once)
+let anchorQueue = Promise.resolve();   // one RegisterData at a time from the operator account (no nonce clashes)
+function anchorDomainVerdict(v, label) {
+  const p = anchorQueue.then(() => anchorDomainVerdictNow(v, label)); anchorQueue = p.catch(() => {}); return p;
+}
+async function anchorDomainVerdictNow(v, label) {
+  if (verdictAnchors.has(v.verdict_sha256)) return verdictAnchors.get(v.verdict_sha256);
+  try { const a = await anchorVerdict(v, label); verdictAnchors.set(v.verdict_sha256, a); log(`domain verdict anchored: ${v.verdict} ${v.site} tx=${a.tx_hash}`); return a; }
+  catch (e) { log("domain verdict anchor FAILED:", e.message); return null; }
+}
+const domainLine = (v) => v.steps.map((s) => `${s.id}=${s.pass}`).join(" ");
+app.use("/jobs/scrape", async (req, res, next) => {
+  const jobId = req.body?.jobId; const url = req.body?.url;
+  let v = domainByJob.get(jobId);
+  if (!v) {
+    try { v = await verifyDomain(grpc(), url, { requireProof: !!req.body?.require_domain_proof, expectAgent: req.body?.expect_supplier_agent ?? undefined }); }
+    catch (e) { log("domain check crashed:", e.message); return res.status(503).json({ error: "domain_check_unavailable" }); }
+    domainByJob.set(jobId, v); if (domainByJob.size > 500) domainByJob.delete(domainByJob.keys().next().value);
+    log(`DOMAIN PROOF ${v.verdict.toUpperCase()}: ${v.site} -> ${domainLine(v)}`);
+  }
+  if (v.verdict === "refused") {
+    const a = v.facts.mirror ? null : await anchorDomainVerdict(v, jobId);
+    log(`POST /jobs/scrape job=${jobId} -> 403 supplier domain refused (no 402 issued, nothing signed, nobody charged)`);
+    return res.status(403).json({ error: "supplier_domain_refused", status: "supplier_domain_refused", charged: false, domain: v,
+      anchor: a && { tx_hash: a.tx_hash, explorer: a.explorer } });
+  }
+  req.domain = v; next();
+});
+
 // Memo binding + replay protection, before anything is verified.
 app.use("/jobs/scrape", (req, res, next) => {
   const h = req.get("payment-signature");
@@ -230,6 +274,9 @@ app.post("/jobs/scrape", async (req, res) => {
     ...(req.body.audit_rows || []),
     [t, "buyer_verified", `account=${b.facts.account} challenge signed + checked on chain: identity_provider=${b.facts.identity_provider?.id} (${b.facts.identity_provider?.name}) credential_valid_to=${b.facts.credential_valid_to} anonymity_revokers=${b.facts.anonymity_revokers} eudemo_allow_listed=true policy="${b.policy}"`],
     [t, "buyer_agent_verified", `by=ClientScope buyer agent #${b.facts.buyer_agent?.token_id} (${b.facts.buyer_agent?.token_address}) "${b.facts.buyer_agent?.name}" status=${b.facts.buyer_agent?.status} card_sha256=${b.facts.buyer_agent?.card_sha256} == on-chain metadata_hash, registry badge_valid=true, fresh challenge signed by its ${b.facts.buyer_agent?.signer_is} account ${b.facts.account}`],
+    ...(req.domain ? [[t, req.domain.verdict === "verified" ? "supplier_domain_verified" : "supplier_domain_unproven",
+      req.domain.verdict === "verified" ? `${req.domain.site} <-> account ${req.domain.facts.proof_account} <-> badge #${req.domain.facts.proof_agent}: proof signed, badge Active and owned by the account, card names this site (proof sha256 ${req.domain.facts.proof_sha256})`
+        : `${req.domain.site} publishes no /.well-known/concordium-agent.json; allowed because the buyer did not require a domain proof`]] : []),
     [t, "payment_required", `x402 402: ${fmt(PRICE_ATOMIC)} ${ASSET} (atomic ${PRICE_ATOMIC}) to payTo=${CLIENTSCOPE_PAYTO}, pay on delivery`],
     [t, "payment_authorized", `signed sponsored payment verified, NOT submitted: payer=${h.sender} nonce=${h.nonce} memo=${req.paymentMemo} expires=${new Date(h.expiry * 1000).toISOString().slice(0, 19).replace("T", " ")} UTC`],
   ];

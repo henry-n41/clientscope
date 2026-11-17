@@ -42,6 +42,7 @@ const MODE_COPY = {
   unregistered_buyer: "A real, approved buyer account with no registered agent",
   fake_supplier: "A fake ClientScope copies the real ID card but has the wrong key",
   kill_switch: "Live kill switch: the buyer's owner revokes its agent in the middle of the job",
+  lookalike_supplier: "A lookalike supplier site with a real badge but the wrong website",
 };
 
 const short = (s, a = 8, b = 6) => (s && s.length > a + b + 1 ? `${s.slice(0, a)}…${s.slice(-b)}` : s || "");
@@ -494,6 +495,11 @@ function JobsPanel({ selected, setSelected, ...p }) {
           badge={<><Pill tone="green" dot pulse>Live</Pill><span className="text-[12px] font-medium text-zinc-400">1 EUDemo</span></>}>
           <SupplierJob {...p} />
         </JobRow>
+        <JobRow id="domain" open={selected === "domain"} onToggle={() => toggle("domain")} icon={Globe} tone="from-sky-400/25 text-sky-300"
+          title="Domain proof: real supplier vs lookalike" text="Before it reads a supplier's site, ClientScope checks that the website, its Concordium account and its badge all point to each other."
+          badge={<Pill tone="green" dot pulse>Live</Pill>}>
+          <DomainScene />
+        </JobRow>
         <JobRow id="custom" open={selected === "custom"} onToggle={() => toggle("custom")} icon={PenLine} tone="from-violet-400/25 text-violet-300"
           title="Custom job" text="Describe your own task. ClientScope drafts a plan, clear rules for “done” and a price estimate for you to review."
           badge={<Pill tone="violet">Your own task</Pill>}>
@@ -518,6 +524,133 @@ function JobsPanel({ selected, setSelected, ...p }) {
         <span>Everything runs on the Concordium test network, so no real money moves. With your wallet, you sign the order first and approve the payment only after the work passes its checks.</span>
       </div>
     </motion.section>
+  );
+}
+
+
+/* ------------------------------------------------------------------ DOMAIN PROOF scene */
+const DOMAIN_STEPS = [
+  ["proof_published", "Site publishes its proof file"],
+  ["proof_names_this_site", "Proof is for this exact site"],
+  ["proof_signature_valid", "Signed by the account's on-chain key"],
+  ["badge_owned_by_account", "Badge is owned by that account"],
+  ["badge_valid", "Badge Active, card hash matches chain"],
+  ["card_names_this_site", "Badge's card names this site"],
+  ["claimed_site_points_back", "The site it claims points back to it"],
+];
+function DomainColumn({ side, info, state, tamper }) {
+  const t = info?.targets?.[side];
+  const res = state?.res; const shown = state?.shown ?? 0;
+  const steps = res ? res.steps : [];
+  const byId = Object.fromEntries(steps.map((x) => [x.id, x]));
+  const rows = res ? steps : DOMAIN_STEPS.map(([id, label]) => ({ id, label }));
+  const revealed = res && shown >= steps.length;
+  const verdict = revealed ? res.verdict : null;
+  const tone = verdict === "verified" ? "emerald" : verdict ? "rose" : "zinc";
+  const agent = side === "real" ? info?.real_agent : info?.lookalike_agent;
+  return (
+    <div data-domain-side={side} data-verdict={verdict || (state?.busy ? "checking" : "idle")}
+      className={`rounded-2xl p-4 ring-1 transition-colors duration-500 ${verdict === "verified" ? "bg-emerald-500/[.06] ring-emerald-400/30" : verdict === "unproven" ? "bg-amber-500/[.05] ring-amber-400/25" : verdict ? "bg-rose-500/[.06] ring-rose-400/30" : "bg-black/20 ring-white/[.06]"}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold uppercase tracking-[.14em] text-zinc-500">{side === "real" ? "Real supplier" : "Lookalike"}</div>
+          <div className="mt-0.5 text-[14px] font-semibold text-white">{side === "real" ? "Northgate Supplies" : "\u201cNorthgate Supplies\u201d"}</div>
+          {t && <a href={t.url} target="_blank" rel="noreferrer" className="mt-0.5 block truncate font-mono text-[11px] text-violet-300 hover:text-violet-200">{t.url.replace("https://", "")}</a>}
+          {agent?.token_id && <div className="mt-0.5 text-[11.5px] text-zinc-500">Badge #{agent.token_id} · real, Active on Concordium</div>}
+        </div>
+        {verdict ? <Pill tone={verdict === "verified" ? "green" : verdict === "unproven" ? "amber" : "red"} dot>{verdict === "verified" ? "Verified" : verdict === "unproven" ? "No proof" : "Refused"}</Pill>
+          : state?.busy ? <Pill tone="violet" dot pulse>Checking</Pill> : <Pill>Not checked</Pill>}
+      </div>
+      {res?.facts?.mirror && <div className="mt-2 rounded-lg bg-sky-400/10 px-2.5 py-1.5 text-[11.5px] text-sky-200 ring-1 ring-sky-400/25">Rehearsal: the proof was read from a local copy because it is not published on the site yet. Rehearsal verdicts are not anchored.</div>}
+      {side === "real" && tamper && <div className="mt-2 rounded-lg bg-amber-400/10 px-2.5 py-1.5 text-[11.5px] text-amber-200 ring-1 ring-amber-400/25">Tampered: the downloaded proof is changed to point at another badge before it is checked.</div>}
+      <div className="mt-3 space-y-1.5">
+        {rows.map((x, i) => {
+          const r = byId[x.id]; const show = res && i < shown;
+          const icon = show ? (r.pass ? <CircleCheck className="h-4 w-4 text-emerald-400" /> : <X className="h-4 w-4 text-rose-400" strokeWidth={3} />)
+            : state?.busy ? <Spin c="h-4 w-4 text-zinc-500" /> : <Minus className="h-4 w-4 text-zinc-600" />;
+          return (
+            <motion.div key={x.id} data-check={x.id} data-pass={show ? String(r.pass) : "pending"} initial={false} animate={{ opacity: show || !res ? 1 : 0.5 }}
+              className="flex items-start gap-2 text-[12.5px]">
+              <span className="mt-0.5 shrink-0">{icon}</span>
+              <span className="min-w-0"><span className={show ? "text-zinc-200" : "text-zinc-500"}>{x.label}</span>
+                {show && <span className="block break-words text-[11px] leading-snug text-zinc-500">{r.detail}</span>}</span>
+            </motion.div>
+          );
+        })}
+        {res && res.steps.length === 1 && res.verdict !== "verified" && revealed && (
+          <div className="text-[11.5px] text-zinc-500">Other checks skipped: there is no proof to check yet. ClientScope would refuse this site for a buyer that requires a domain proof.</div>
+        )}
+      </div>
+      {revealed && (
+        <div className="mt-3">
+          {state?.anchoring ? <div className="flex items-center gap-2 text-[12px] text-zinc-400"><Spin c="h-3.5 w-3.5" /> Anchoring this verdict on Concordium…</div>
+            : res.anchor?.explorer ? <LinkTile icon={Receipt} label={verdict === "verified" ? "Pass anchored on Concordium" : "Refusal anchored on Concordium"} value={short(res.anchor.tx_hash, 10, 8)} href={res.anchor.explorer} mono />
+            : state?.anchorErr ? <div className="text-[12px] text-amber-300">Could not anchor this verdict right now.</div> : null}
+        </div>
+      )}
+    </div>
+  );
+}
+function DomainScene() {
+  const [info, setInfo] = useState(null);
+  const [tamper, setTamper] = useState(false);
+  const [st, setSt] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  useEffect(() => { fetch(`${API}/api/domain/info`).then((r) => (r.ok ? r.json() : null)).then(setInfo).catch(() => {}); }, []);
+  const set = (side, patch) => setSt((o) => ({ ...o, [side]: { ...(o[side] || {}), ...patch } }));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const check = async (side, tam) => {
+    set(side, { busy: true, res: null, shown: 0, anchoring: false, anchorErr: false });
+    const post = (anchor) => fetch(`${API}/api/domain/check`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ target: side, tamper: tam, anchor }) })
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); });
+    const t0 = Date.now();
+    const res = await post(false);
+    set(side, { res, busy: false, ms: Date.now() - t0 });
+    for (let i = 1; i <= res.steps.length; i++) { await sleep(420); set(side, { shown: i }); }
+    if (res.facts?.mirror || res.verdict === "unproven") return;   // rehearsal verdicts and "no proof yet" are not anchored
+    set(side, { anchoring: true });
+    try { const a = await post(true); set(side, { res: { ...res, anchor: a.anchor }, anchoring: false, anchorErr: !a.anchor }); }
+    catch { set(side, { anchoring: false, anchorErr: true }); }
+  };
+  const runBoth = async (tam = tamper) => {
+    setBusy(true); setErr(null);
+    try { await Promise.all([check("real", tam), (async () => { await sleep(150); await check("lookalike", tam); })()]); }
+    catch { setErr("The check could not reach the job server. Try again in a moment."); }
+    setBusy(false);
+  };
+  const toggleTamper = async (v) => { setTamper(v); setErr(null); setBusy(true); try { await check("real", v); } catch { setErr("The check could not reach the job server."); } setBusy(false); };
+  return (
+    <div className="space-y-4 px-5 pb-5 sm:px-6 sm:pb-6" data-domain-scene>
+      <p className="text-[12.5px] leading-relaxed text-zinc-400">
+        Both sites carry the name Northgate Supplies, and both have a real badge on Concordium's Agent Registry. Only the real one can make its website, its Concordium account and its badge all point to each other.
+        ClientScope runs these checks before it reads a supplier page, so a lookalike is refused before anyone pays.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button onClick={() => runBoth()} disabled={busy} data-domain-run
+          className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-sky-500 to-violet-500 px-4 py-2.5 text-[13.5px] font-semibold text-white shadow-[0_10px_30px_-10px_rgba(56,189,248,.8)] transition hover:brightness-110 disabled:opacity-50">
+          {busy ? <Spin c="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />} Check both sites now
+        </button>
+        {!tamper ? (
+          <button onClick={() => toggleTamper(true)} disabled={busy} data-domain-tamper
+            className="flex items-center gap-2 rounded-xl bg-amber-400/10 px-3.5 py-2.5 text-[13px] font-medium text-amber-200 ring-1 ring-amber-400/30 transition hover:bg-amber-400/15 disabled:opacity-50">
+            <ShieldAlert className="h-4 w-4" /> Tamper with the real proof
+          </button>
+        ) : (
+          <button onClick={() => toggleTamper(false)} disabled={busy} data-domain-restore
+            className="flex items-center gap-2 rounded-xl bg-emerald-400/10 px-3.5 py-2.5 text-[13px] font-medium text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-400/15 disabled:opacity-50">
+            <Undo2 className="h-4 w-4" /> Restore the real proof
+          </button>
+        )}
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <DomainColumn side="real" info={info} state={st.real} tamper={tamper} />
+        <DomainColumn side="lookalike" info={info} state={st.lookalike} />
+      </div>
+      {err && <div className="flex items-start gap-2 rounded-xl bg-amber-400/10 px-3.5 py-2.5 text-[13px] text-amber-200 ring-1 ring-amber-400/25"><ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />{err}</div>}
+      <p className="flex items-start gap-1.5 text-[11.5px] leading-relaxed text-zinc-500"><Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        Every check is live: the proof file is downloaded now, its signature is checked against keys read from Concordium, and the badge and its card are read from the registry. Tamper changes the downloaded copy before checking, as an attacker on the wire or a hacked web host would. Each verdict is anchored on Concordium.</p>
+    </div>
   );
 }
 
@@ -679,6 +812,7 @@ const OUTCOME_TITLE = {
   payment_declined: "Delivered, but the payment was not approved",
   cancelled: "Hire cancelled, so nothing was charged",
   halted_revoked: "Kill switch pressed: the job stopped and nothing was charged",
+  domain_refused: "Lookalike supplier refused before any payment",
 };
 
 function Progress({ run, elapsed }) {
@@ -863,6 +997,8 @@ function Result({ run }) {
       ? "The signed payment was thrown away and never sent. The failure is still logged and its fingerprint stored on chain."
       : run.outcome === "halted_revoked"
       ? `The owner revoked the buyer agent's badge mid-job. ClientScope saw it on chain ${r.detection_seconds || "?"} s after the revoke's block, stopped the job, threw the signed payment away and anchored a halt receipt that names the revoke transaction.`
+      : run.outcome === "domain_refused"
+      ? `The supplier site ${r.domain?.site || ""} has a real Concordium badge, but its website, account and badge do not all point to each other (${(r.domain?.failed || []).map((f) => f.replace(/_/g, " ")).join(", ") || "domain proof failed"}). ClientScope refused before any 402, so nothing was signed. The refusal is anchored on Concordium.`
       : run.outcome === "payment_declined"
       ? "The work passed its checks, but the payment was not approved in your wallet, so nothing was sent. This is recorded in the Audit Log and anchored on chain."
       : run.outcome === "cancelled"
@@ -891,10 +1027,11 @@ function Result({ run }) {
           {r.receipt_verified && <Pill tone="violet"><BadgeCheck className="h-3 w-3" /> Receipt checked: valid</Pill>}
         </div>
       </div>
-      {(r.sheet_url || r.payment_tx || r.anchor_tx || r.revoke_tx) && (
+      {(r.sheet_url || r.payment_tx || r.anchor_tx || r.revoke_tx || r.domain_anchor_tx) && (
         <div className="space-y-2 border-t border-white/[.06] px-5 py-4">
           {r.sheet_url && <LinkTile icon={FileSpreadsheet} label={ok ? "Your finished Google Sheet" : "Sheet with the failure log"} value="Open in Google Sheets" href={r.sheet_url} />}
           {r.payment_tx && <LinkTile icon={HandCoins} label="Payment on Concordium" value={short(r.payment_tx, 10, 8)} href={r.payment_tx_url} mono />}
+          {r.domain_anchor_tx && <LinkTile icon={Globe} label="Domain refusal stored on Concordium" value={short(r.domain_anchor_tx, 10, 8)} href={r.domain_anchor_tx_url} mono />}
           {r.revoke_tx && <LinkTile icon={ShieldOff} label="Owner's revoke on Concordium" value={short(r.revoke_tx, 10, 8)} href={r.revoke_tx_url} mono />}
           {r.anchor_tx && <LinkTile icon={Receipt} label={run.outcome === "halted_revoked" ? "Halt receipt stored on Concordium" : "Receipt stored on Concordium"} value={short(r.anchor_tx, 10, 8)} href={r.anchor_tx_url} mono />}
         </div>
