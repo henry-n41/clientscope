@@ -11,6 +11,7 @@ import { grpc, balances, txStatus } from "./chain.mjs";
 import { signMessage } from "@concordium/web-sdk";
 import { generateKeyPairSync } from "node:crypto";
 import { SPONSOR_ADDRESS, explorerTx } from "./config.mjs";
+import { BUYER_AGENT_ID } from "./agent_trust.mjs";
 
 // Spend policy (soft cap, enforced in this client before anything is signed)
 const MAX_PER_JOB_ATOMIC = BigInt(process.env.CLIENTSCOPE_MAX_ATOMIC || "2000000"); // refuse anything above 2 EUDemo (env override only for testing the refusal)
@@ -103,10 +104,17 @@ if (SIM === "impostor") { // fresh random key that claims the real client accoun
 } else if (SIM === "not-allowlisted") { // a real identity-backed account that is NOT on the EUDemo allow list (test only)
   buyerAddr = SPONSOR_ADDRESS; buyerSigner = buildBasicAccountSigner(process.env.CCD_SPONSOR_PRIVATE_KEY);
 }
+// Gap 2: I am registered agent #1211. ClientScope checks my badge, card hash, Active status and that my signing key controls it.
+let myAgent = String(process.env.CLIENTSCOPE_BUYER_AGENT_ID || BUYER_AGENT_ID);
+if (SIM === "unregistered") myAgent = null;      // real account + real key + EU allow list, but no registered agent (test only)
+if (SIM === "stolen-card") myAgent = "1010";     // claims ClientScope's own registered agent, which this account does not control (test only)
 say(`\n[5/8] Proving who I am to ClientScope (signed challenge, no private data shared)`);
-if (SIM) say(`      MODE: simulate unverified buyer = ${SIM}${SIM === "impostor" ? " (fresh random key, claims my account)" : " (real account, not on the EUDemo allow list)"}`);
+const SIM_TXT = { impostor: "fresh random key, claims my account", "not-allowlisted": "real account, not on the EUDemo allow list",
+  unregistered: "real account and key, but no registered agent", "stolen-card": "real account and key, claims agent #1010 which it does not control" };
+if (SIM) say(`      MODE: simulate unverified buyer = ${SIM} (${SIM_TXT[SIM] || "?"})`);
+say(myAgent ? `      I am registered buyer agent #${myAgent} on Concordium's Agent Registry` : `      I present no registered agent`);
 const base = `http://localhost:${PORT}`;
-const chal = await (await fetch(`${base}/buyer/challenge`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ account: buyerAddr, jobId }) })).json();
+const chal = await (await fetch(`${base}/buyer/challenge`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ account: buyerAddr, jobId, agentId: myAgent }) })).json();
 say(`      <- challenge for job ${jobId}, nonce ${chal.nonce.slice(0, 12)}..., expires ${chal.expires.slice(11, 19)}Z`);
 const sig = jsonSafe(await signMessage(AccountAddress.fromBase58(buyerAddr), chal.message, buyerSigner));
 say(SIM === "impostor" ? `      signed it with a fresh random key, claiming to be account ${buyerAddr.slice(0, 10)}...` : `      ${OK} signed it with account ${buyerAddr.slice(0, 10)}...'s key (Concordium signed-message format)`);
@@ -114,9 +122,13 @@ const vr = await fetch(`${base}/buyer/verify`, { method: "POST", headers: { "con
 const v = await vr.json();
 const LBL = { challenge_fresh: "challenge fresh + single use", account_exists: "account exists on chain", challenge_signed: "signature matches the account's on-chain keys",
   identity_backed: "identity-backed credential (normal, from an identity provider)", known_identity_provider: "identity provider registered on chain",
-  credential_valid: "identity credential not expired", anonymity_revocation: ">= 2 anonymity revokers (identity recoverable under legal process)", eudemo_allow_listed: "on the EUDemo allow list (EU-nationality ZK proof via faucet)" };
+  credential_valid: "identity credential not expired", anonymity_revocation: ">= 2 anonymity revokers (identity recoverable under legal process)", eudemo_allow_listed: "on the EUDemo allow list (EU-nationality ZK proof via faucet)",
+  buyer_agent_registered: "my buyer agent is registered in the CIS-8004 Agent Registry", buyer_agent_active: "my buyer agent is Active on chain",
+  buyer_card_hash_matches: "my Agent Card hashes to the on-chain metadata_hash", buyer_card_names_agent: "my card's badge names the same token and owner as the chain",
+  buyer_badge_valid: "Concordium's badge checker says my badge is valid", buyer_agent_controlled_by_signer: "the key that signed the challenge controls my registered agent" };
 for (const [k, ok] of Object.entries(v.checks || {})) say(`      ${ok ? OK : BAD} ${LBL[k] || k}`);
 if (v.facts?.identity_provider) say(`         identity provider #${v.facts.identity_provider.id} "${v.facts.identity_provider.name}", credential valid to ${v.facts.credential_valid_to}, ${v.facts.revealed_attributes} attributes revealed`);
+if (v.facts?.buyer_agent?.token_address) say(`         buyer agent #${v.facts.buyer_agent.token_id} ${v.facts.buyer_agent.token_address}, card ${String(v.facts.buyer_agent.card_sha256 || "").slice(0, 16)}..., signer is its ${v.facts.buyer_agent.signer_is || "?"}`);
 step("buyer_verification", { http: vr.status, verified: v.verified, checks: v.checks, failed: v.failed, facts: v.facts });
 if (!v.verified) {
   say(`      ${BAD} ClientScope REJECTED me as a buyer (HTTP ${vr.status}): failed ${v.failed.join(", ")}`);
@@ -162,8 +174,13 @@ if (res.status === 422) {
   say(`      ${OK} No PAYMENT-RESPONSE: the sponsor never co-signed, nothing was submitted`);
   say(`\n      On-chain proof (read back from the Concordium node):`);
   line("client", before, after); line("sponsor", sponsorBefore, sponsorAfter); line("clientscope", payToBefore, payToAfter);
-  const unchanged = [[before, after], [sponsorBefore, sponsorAfter], [payToBefore, payToAfter]].every(([b, a]) => b.eudemoAtomic === a.eudemoAtomic && b.ccdMicro === a.ccdMicro && b.nonce === a.nonce);
-  say(`      ${unchanged ? OK : BAD} ${unchanged ? "All balances and nonces unchanged: no transaction went on chain, buyer NOT charged" : "Something changed on chain!"}`);
+  // The buyer and ClientScope's pay-to account must be untouched. The sponsor may have sent ONE RegisterData: the anchor of the
+  // failed job's receipt (ClientScope pays that fee itself), never a payment, so its EUDemo must be unchanged.
+  const same = (b, a) => b.eudemoAtomic === a.eudemoAtomic && b.ccdMicro === a.ccdMicro && b.nonce === a.nonce;
+  const sponsorOnlyAnchored = sponsorBefore.eudemoAtomic === sponsorAfter.eudemoAtomic && BigInt(sponsorAfter.nonce) - BigInt(sponsorBefore.nonce) <= 1n;
+  const unchanged = same(before, after) && same(payToBefore, payToAfter) && sponsorOnlyAnchored;
+  if (sponsorBefore.nonce !== sponsorAfter.nonce) say(`      ${OK} Sponsor sent 1 transaction: the anchor of this failed job's receipt (fee paid by ClientScope, not the buyer)`);
+  say(`      ${unchanged ? OK : BAD} ${unchanged ? "Buyer and ClientScope balances and nonces unchanged: no payment went on chain, buyer NOT charged" : "Something changed on chain!"}`);
   out.ok = unchanged; out.charged = false; out.delivery_failed = true; out.sheet_url = body.sheet_url;
   console.log("RESULT " + JSON.stringify(out)); process.exit(unchanged ? 5 : 6);
 }

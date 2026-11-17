@@ -3,18 +3,55 @@
 @theme {
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
-  --color-ink-950: #070b18;
-  --color-ink-900: #0c1326;
-  --color-ink-800: #141d36;
-  --color-brand-500: #5b5bf6;
-  --color-brand-600: #4f46e5;
+  --color-ink-950: #05060a;
+  --color-ink-900: #0a0c13;
+  --color-ink-850: #0e111a;
+  --color-ink-800: #141826;
 }
 
-html { background: #f4f6fb; }
-body { font-feature-settings: "cv11", "ss01"; -webkit-font-smoothing: antialiased; }
+html { background: #05060a; color-scheme: dark; }
+body { font-feature-settings: "cv11", "ss01", "ss03"; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+::selection { background: rgba(139, 124, 255, .35); }
 
-@keyframes rowin { from { opacity: 0; transform: translateY(-4px); background: #eef2ff; } to { opacity: 1; transform: none; } }
+/* soft moving aurora behind the hero */
+@keyframes drift-a { 0%,100% { transform: translate3d(0,0,0) scale(1); } 50% { transform: translate3d(6%, 4%, 0) scale(1.08); } }
+@keyframes drift-b { 0%,100% { transform: translate3d(0,0,0) scale(1.05); } 50% { transform: translate3d(-7%, 3%, 0) scale(.95); } }
+.aurora-a { animation: drift-a 18s ease-in-out infinite; }
+.aurora-b { animation: drift-b 22s ease-in-out infinite; }
+
+.dot-grid {
+  background-image: radial-gradient(rgba(255,255,255,.075) 1px, transparent 1px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 30%, transparent 75%);
+}
+
+/* gradient text */
+.text-gradient { background: linear-gradient(100deg, #c4b5fd 0%, #a5b4fc 35%, #7dd3fc 70%, #6ee7b7 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+/* hairline gradient border for premium cards */
+.card { position: relative; background: linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.02)); border: 1px solid rgba(255,255,255,.08); box-shadow: 0 1px 0 rgba(255,255,255,.04) inset, 0 20px 50px -20px rgba(0,0,0,.6); backdrop-filter: blur(12px); }
+.card-hero { background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.025)); }
+.card-hero::before { content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1px; background: linear-gradient(140deg, rgba(167,139,250,.55), rgba(255,255,255,.06) 35%, rgba(255,255,255,.04) 65%, rgba(52,211,153,.4)); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; }
+
+/* shimmer sweep on the hire button */
+@keyframes sweep { 0% { transform: translateX(-120%) skewX(-20deg); } 60%,100% { transform: translateX(260%) skewX(-20deg); } }
+.btn-shine::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 35%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.28), transparent); animation: sweep 3.6s ease-in-out infinite; }
+.btn-shine:disabled::after { display: none; }
+
+@keyframes rowin { from { opacity: 0; transform: translateY(-4px); background: rgba(139,124,255,.12); } to { opacity: 1; transform: none; } }
 .row-in { animation: rowin .5s ease-out; }
-@keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(91,91,246,.45); } 100% { box-shadow: 0 0 0 10px rgba(91,91,246,0); } }
+@keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(139,124,255,.55); } 100% { box-shadow: 0 0 0 10px rgba(139,124,255,0); } }
 .pulse-ring { animation: pulse-ring 1.4s ease-out infinite; }
-.grid-bg { background-image: radial-gradient(rgba(255,255,255,.07) 1px, transparent 1px); background-size: 22px 22px; }
+
+.thin-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.thin-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 8px; }
+.thin-scroll::-webkit-scrollbar-track { background: transparent; }
+
+select option { background: #0e111a; color: #e4e4e7; }
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora-a, .aurora-b, .btn-shine::after, .pulse-ring, .row-in { animation: none !important; }
+}
+
+input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input[type=number] { -moz-appearance: textfield; }

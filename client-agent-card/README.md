@@ -1,20 +1,20 @@
-# Client agent CIS-8004 registration (option a): prepared, not sent
+# Buyer agent: Northgate Supplies Buyer Agent (demo), CIS-8004 agent #1211
 
-ClientScope already checks the buyer by a signed challenge and on-chain identity facts (see ../x402/README.md, Feature 3).
-Registering the buyer agent in the same CIS-8004 registry (contract 12802) would add one more check:
-"this account owns an active registered agent whose card hash matches".
+Registered on Concordium testnet on 16 Nov 2026 from the buyer account `4j6RhVCWEG3GDQcwcgSQRxu7nmXSC4V834YrsVtudomCG6ueMH`.
 
-Files:
-- `client-agent-card.json`: the buyer agent's card. sha256 is in `register-client-agent.json`.
-- `register-client-agent.json`: the exact `CIS-8004.register` call (parameter JSON), prepared and not sent.
+| What | Value |
+|------|-------|
+| Token address (badge) | `JyP9XR6EkrzHnx9g177u9` |
+| Registry | CIS-8004, contract 12802,0 (testnet) |
+| Agent Card | https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/client-agent-card.json |
+| Card SHA-256 (pinned on chain) | `19f65f46d5f4b324d19f93997e049b259a22cccf245133fb28a2fe1697ad5497` |
+| register tx | [41d04e48…](https://ccdexplorer.io/testnet/transaction/41d04e48f43f118d452a39fe3be25faae8eadc86a239b18eb33a46d4e1c9912e) |
+| setAgentURI tx (pins the card hash) | [3a7f1803…](https://ccdexplorer.io/testnet/transaction/3a7f1803d399a8f79b0bc0e41a5b423eb247cdf4fa1a98c43a23ccc51f74d39b) |
+| Badge check | https://agent-registry-mcp.concordium.com/v1/check-badge/JyP9XR6EkrzHnx9g177u9?network=testnet |
 
-What Henry would need to do:
-1. Add `client-agent-card.json` unchanged to the GitHub Pages repo `clientscope-supplier-demo` and push, so it is served at
-   https://henry-n41.github.io/clientscope-supplier-demo/client-agent-card.json (any edit changes the hash; re-run the prep then).
-2. Send the `register` call from the buyer account 4j6RhVCW... The buyer key is already in env, so this can be sent
-   headless with no wallet (gas paid in CCD by the buyer account, a few CCD, estimated at send time, not by the sponsor). Alternatively sign it in
-   the Concordium Browser Wallet with a page like `supplier-page/sign-uri.html`, if that account is imported there.
-3. Then ClientScope adds the rule `registered_agent` to its accepted-buyer policy (look up the token via the registry's
-   `agentOf` or owner view and compare the hosted card hash).
+`client-agent-card.json` here is a byte-for-byte copy of the hosted card. Never edit either by hand: any change breaks the
+on-chain hash. To change the card, regenerate it (Agent Registry `build_agent_badge`), push it to the `agent-cards` branch,
+then pin the new hash with `node x402/registry.mjs send CCD_CLIENT_PRIVATE_KEY <buyer account>` and a `build_set_agent_uri` payload.
 
-Nothing here touches ClientScope's own agent-card.json or its badge.
+ClientScope refuses any buyer agent that is not registered, not Active, whose card does not hash to the on-chain value, or
+whose signing key does not control the agent it claims (see `x402/agent_trust.mjs` and `x402/buyer_check.mjs`).

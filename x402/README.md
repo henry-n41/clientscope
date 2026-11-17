@@ -127,3 +127,23 @@ The node defaults to `grpc.testnet.concordium.com:20000` over TLS; set `CCD_GRPC
 - If settlement fails after a good delivery (e.g. the buyer moved their EUDemo away during the job), the client gets
   the sheet but ClientScope isn't paid. This is logged as `payment_failed`. That's the trade-off of pay on delivery.
 - The 600 s window is the facilitator's maximum. Jobs that take longer would need a longer window or a different scheme.
+
+
+## Gap 2: both agents are registered and verify each other
+
+Two CIS-8004 agents talk to each other: ClientScope (agent #1010, owner `3qYSik…`) and the Northgate buyer agent (agent #1211, owner `4j6Rh…`).
+Each side checks the other on chain and then makes it sign a fresh nonce, so a copied Agent Card is useless to an impostor.
+
+| Step | Who checks | What is checked | Code |
+|------|-----------|-----------------|------|
+| Badge | buyer checks ClientScope, ClientScope checks the buyer | agent read straight from the registry contract (`agentOf`), status Active, card fetched from the on-chain URI hashes to the on-chain `metadata_hash`, card names the same token and owner, Concordium's badge checker agrees | `agent_trust.mjs` `verifyAgentBadge` |
+| Handshake, buyer to ClientScope | buyer | ClientScope signs the buyer's fresh nonce (with both agent ids and the job id in the signed text); the signature must match the signer's on-chain keys and the signer must be #1010's owner, agentWallet, or an operator the owner approved on the registry (`operatorOf`) | `server.mjs` `POST /agent/handshake`, `verify_supplier.mjs` |
+| Handshake, ClientScope to buyer | ClientScope | the existing single-use challenge now names the buyer agent; the signing account must control that agent | `buyer_check.mjs` (`requireAgent`) |
+| Audit | both | `supplier_handshake_verified` (buyer) and `buyer_agent_verified` (ClientScope) rows go into the Audit Log, which is hashed and anchored on chain | `client_agent.py`, `server.mjs` |
+
+Test modes: `client_agent.py --simulate-unverified-buyer unregistered|stolen-card` (ClientScope refuses) and
+`--simulate-fake-supplier wrong-key|replay` (the buyer refuses, `fake_supplier.mjs`). `node x402/test_gap2.mjs` runs all checks against the running server.
+
+Findings from testnet (16 Nov 2026), so nobody repeats them: an approved operator can NOT call `setAgentURI` or `revoke` on this
+deployment (reject -7201), only the owner can; `setAgentWallet` needs a PLAIN ed25519 signature over the 162 canonical bytes (the
+signMessage format is rejected) and a deadline no more than about an hour or two ahead (+60 min accepted, +180 min rejected).

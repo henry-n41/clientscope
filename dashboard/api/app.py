@@ -51,8 +51,8 @@ now_iso = lambda: datetime.datetime.now(datetime.timezone.utc).isoformat(timespe
 
 # ---------------------------------------------------------------- run state
 STEPS = [
-    ("badge", "Check agent badge", "Buyer agent checks ClientScope's Concordium badge and Agent Card hash"),
-    ("buyer", "Verify buyer", "ClientScope checks the buyer's signed challenge, identity and allow list"),
+    ("badge", "Check agent badge", "Buyer agent checks ClientScope's Concordium badge and Agent Card hash, then ClientScope signs the buyer's fresh nonce"),
+    ("buyer", "Verify buyer", "ClientScope checks the buyer agent's own badge, its signed challenge, identity and allow list"),
     ("hold", "Hold payment", "x402: buyer signs 1 EUDemo, ClientScope verifies it but does not submit"),
     ("scrape", "Scrape supplier", "Read the supplier's price page"),
     ("sheet", "Build Google Sheet", "Products and Audit Log written to a new sheet"),
@@ -66,6 +66,9 @@ MODES = {
     "impostor": (["--simulate-unverified-buyer", "impostor"], "Impostor buyer (wrong key)"),
     "not_allowlisted": (["--simulate-unverified-buyer", "not-allowlisted"], "Buyer not on the EUDemo allow list"),
     "bad_card": (["--simulate-bad"], "Tampered Agent Card"),
+    "unregistered_buyer": (["--simulate-unverified-buyer", "unregistered"], "Buyer is not a registered agent"),
+    "fake_supplier": (["--simulate-fake-supplier", "wrong-key"], "Fake ClientScope with a copied card"),
+    "wallet": ([], "Your Concordium wallet"),     # Feature 6: not a client_agent.py mode; driven by /api/wallet/*
 }
 
 class Run:
@@ -84,6 +87,7 @@ class Run:
         self.result = {}
         self.version = 0; self.last_activity = time.time()
         self.lock = threading.RLock()
+        self.account = None; self.session = None; self.nonce = None; self.awaiting = False; self.wallet_audit_rows = []
 
     def bump(self):
         self.version += 1; self.last_activity = time.time()
@@ -103,7 +107,7 @@ class Run:
     def snapshot(self):
         with self.lock:
             return {"id": self.id, "mode": self.mode, "mode_label": self.mode_label, "status": self.status,
-                    "outcome": self.outcome, "started": self.started, "finished": self.finished, "job_id": self.job_id,
+                    "outcome": self.outcome, "account": self.account, "started": self.started, "finished": self.finished, "job_id": self.job_id,
                     "steps": [self.steps[k] for k, _, _ in STEPS], "audit": self.audit, "audit_source": self.audit_source,
                     "console": self.console[-400:], "result": self.result, "version": self.version}
 
@@ -152,7 +156,10 @@ def on_server_line(r: Run, line: str):
         d = f"{m.group(2)}/{m.group(1)} product rows complete, supplier page has {m.group(3)}" if m else msg
         if r.steps["sheet"]["status"] == "running": r.step("sheet", "done")
         r.step("delivery", "done" if passed else "failed", ("Passed: " if passed else "Failed: ") + d)
-        if passed:
+        if r.mode == "wallet":
+            if passed: r.step("settle", "running", "Delivery passed. Preparing the payment request for your wallet")
+            else: r.step("settle", "skipped", "Not charged. No payment was ever requested from your wallet.", protected=True)
+        elif passed:
             r.step("settle", "running", "Delivery passed. Sponsor co-signs and submits, waiting for finality")
         else:
             r.step("settle", "skipped", "Not charged. The signed payment was discarded and never submitted.", protected=True)
@@ -161,7 +168,8 @@ def on_server_line(r: Run, line: str):
         m = re.search(r"tx=([0-9a-f]{64})", msg)
         if "success=true" in msg and m:
             r.result["payment_tx"] = m.group(1)
-            r.step("settle", "done", "Finalized on chain: 1 EUDemo to ClientScope, fee paid by the sponsor", tx=m.group(1))
+            r.step("settle", "done", ("Approved in your wallet after delivery and finalized on chain: 1 EUDemo to ClientScope, fee paid by the sponsor"
+                                      if r.mode == "wallet" else "Finalized on chain: 1 EUDemo to ClientScope, fee paid by the sponsor"), tx=m.group(1))
         else:
             r.step("settle", "failed", msg)
     elif msg.startswith("fee ") and "paid by sponsor" in msg:
@@ -265,7 +273,7 @@ def on_agent_line(r: Run, raw: str):
     elif "DECISION: HIRED" in s:
         r.step("badge", "done", r.result.get("badge_summary", "Verified by Concordium"))
     elif "DECISION: REFUSED" in s:
-        r.step("badge", "failed", "Badge check failed: the buyer agent refused to hire. Nothing ran, nothing was paid.")
+        r.step("badge", "failed", "Badge or handshake check failed: the buyer agent refused to hire. Nothing ran, nothing was paid.")
         r.outcome = "agent_refused"
     elif m := re.search(r"challenge for job (CS-[0-9A-Z-]+)", s):
         r.job_id = m.group(1); r.bump()
@@ -277,6 +285,8 @@ def on_agent_line(r: Run, raw: str):
         why = ("The signature does not match the account's on-chain keys, so this is not the real account holder"
                if "challenge_signed" in failed and "account_exists" not in failed else
                "The account is not on the EUDemo allow list" if failed == ["eudemo_allow_listed"] else
+               "The buyer is not a registered agent on Concordium's Agent Registry" if failed and "buyer_agent_registered" in failed else
+               "The buyer's key does not control the registered agent it claims" if failed == ["buyer_agent_controlled_by_signer"] else
                "Failed: " + ", ".join(f.replace("_", " ") for f in failed))
         r.step("buyer", "failed", "Rejected before any payment. " + why)
         r.outcome = "buyer_rejected"
@@ -403,6 +413,145 @@ def finish(r: Run, code: int):
             r.result["charged"] = not (bb["eudemoAtomic"] == ba["eudemoAtomic"] and bb["ccdMicro"] == ba["ccdMicro"])
     r.bump()
 
+
+# ---------------------------------------------------------------- Feature 6: the client approves with their own Concordium Browser Wallet
+# The browser signs (signMessage for the buyer challenge and order, sendSponsoredTransaction for the payment AFTER delivery).
+# This process only relays to the job server (x402/server.mjs, wallet_flow.mjs), which does every check. The verified buyer
+# session never reaches the browser.
+ADDR_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{50}$")
+TX_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+utc_row = lambda: datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+SIGN_TIMEOUT = 300
+CHECK_LABELS = {"challenge_fresh": "Challenge fresh and single use", "account_exists": "Account exists on chain",
+  "challenge_signed": "Your signature matches the account's on-chain keys", "identity_backed": "Account is backed by a real identity",
+  "known_identity_provider": "Identity provider registered on chain", "credential_valid": "Identity credential not expired",
+  "anonymity_revocation": "Identity recoverable under legal process (2 or more anonymity revokers)",
+  "eudemo_allow_listed": "On the EUDemo allow list", "has_funds": "Holds at least 1 EUDemo"}
+
+def x402_post(path, body, headers=None, timeout=30):
+    return requests.post(f"http://127.0.0.1:{X402_PORT}{path}", json=body, headers=headers or {}, timeout=timeout)
+
+def wallet_run(rid, need=None):
+    r = RUNS.get(rid)
+    if not r or r.mode != "wallet" or r.finished: raise HTTPException(404, "no active wallet hire with that id")
+    if need == "sign" and r.steps["buyer"]["status"] != "running": raise HTTPException(409, "this hire is not waiting for a signature")
+    if need == "pay" and not r.awaiting: raise HTTPException(409, "this hire is not waiting for a payment")
+    return r
+
+def finish_wallet(r: Run, outcome: str, detail: str | None = None):
+    with r.lock:
+        if r.finished or getattr(r, "_closing", False): return
+        r._closing = True
+    try:
+        r.awaiting = False
+        if detail: r.result["error_detail"] = redact(detail)
+        time.sleep(1.0)                          # let the job server's last log lines land
+        if r.job_id:
+            rec = ROOT / "build-log" / "receipts" / f"{r.job_id}.json"
+            if rec.exists():
+                d = json.loads(rec.read_text())
+                r.result["receipt_sha256"] = d.get("receipt_sha256"); r.result["log_sha256"] = d["receipt"]["audit_log"]["sha256"]
+                r.result.setdefault("anchor_tx", d.get("anchor", {}).get("tx_hash"))
+        if r.result.get("anchor_retry_needed") and not r.result.get("anchor_tx") and r.result.get("sheet_url"):
+            retry_anchor(r)
+        elif r.result.get("anchor_tx") and r.result.get("sheet_url"):
+            sid = r.result["sheet_url"].split("/d/")[1].split("/")[0]
+            v = subprocess.run([PY, "verify_receipt.py", "--sheet", sid], cwd=str(ROOT), capture_output=True, text=True)
+            r.result["receipt_verified"] = v.returncode == 0
+        for k in ("payment_tx", "anchor_tx"):
+            if r.result.get(k): r.result[k + "_url"] = EXPLORER + r.result[k]
+        refresh_audit(r)
+        why = {"buyer_rejected": "Not run: you were not verified, so nothing was requested",
+               "agent_refused": "Not run: the agent's badge was not valid",
+               "cancelled": "Not run: the wallet signature was not given",
+               "payment_declined": "Not run", "error": "Not run"}.get(outcome, "Not run")
+        for k, _, _ in STEPS:
+            if r.steps[k]["status"] in ("pending", "running"): r.step(k, "skipped", why)
+        r.outcome = outcome
+        r.status = "succeeded" if outcome == "delivered_paid" else "failed"
+        r.result["charged"] = outcome == "delivered_paid"
+        r.result.pop("payment_request", None)
+        r.bump()
+    except Exception as e:
+        r.status = "failed"; r.outcome = r.outcome or "error"; r.result["error"] = redact(str(e))
+    finally:
+        r.finished = now_iso(); r.bump()
+        try: (RUN_DIR / f"run-{r.id}.json").write_text(json.dumps(r.snapshot(), indent=1))
+        except Exception: pass
+        HIRE_LOCK.release()
+
+def _sign_watchdog(r: Run):
+    time.sleep(SIGN_TIMEOUT)
+    if not r.finished and r.steps["buyer"]["status"] == "running":
+        r.step("buyer", "failed", "No signature arrived from your wallet within 5 minutes, so the hire was cancelled. Nothing was paid.")
+        finish_wallet(r, "cancelled")
+
+def run_wallet_job(r: Run):
+    PROGRESS.write_text("")
+    stop = threading.Event()
+    threading.Thread(target=tail_progress, args=(r, stop), daemon=True).start()
+    r.step("scrape", "running", "Fetching the supplier page")
+    try:
+        resp = x402_post("/wallet/job", {"jobId": r.job_id, "url": CA.SUPPLIER_URL, "client": "Northgate Supplies (demo)",
+                                         "audit_rows": r.wallet_audit_rows}, headers={"x-buyer-session": r.session}, timeout=900)
+        body = resp.json()
+    except Exception as e:
+        stop.set(); finish_wallet(r, "error", f"The job server did not answer ({type(e).__name__})"); return
+    time.sleep(1.0); stop.set()
+    if body.get("sheet_url"): r.result["sheet_url"] = body["sheet_url"]
+    if resp.status_code == 422:
+        r.step("settle", "skipped", "Not charged. No payment was ever requested from your wallet.", protected=True)
+        finish_wallet(r, "delivery_failed"); return
+    if resp.status_code != 200 or not body.get("sponsored_transaction"):
+        finish_wallet(r, "error", f"The job server answered {resp.status_code}: {body.get('status') or body.get('error')}"); return
+    with r.lock:
+        r.result["payment_request"] = body["sponsored_transaction"]; r.result["payment_request_expires"] = body.get("expires")
+        r.awaiting = True; r.bump()
+    r.step("settle", "running", "Delivery passed. Approve the 1 EUDemo payment in your wallet. ClientScope pays the network fee.")
+    refresh_audit_async(r)
+    try: wait = max(30, (datetime.datetime.fromisoformat(body["expires"].replace("Z", "+00:00")) - datetime.datetime.now(datetime.timezone.utc)).total_seconds())
+    except Exception: wait = 600
+    deadline = time.time() + wait
+    while time.time() < deadline and r.awaiting and not r.finished: time.sleep(2)
+    if r.awaiting and not r.finished:
+        r.awaiting = False
+        try: x402_post("/wallet/declined", {"jobId": r.job_id, "reason": "expired"}, timeout=180)
+        except Exception: pass
+        r.step("settle", "skipped", "Not charged. The payment request expired before it was approved in your wallet.", protected=True)
+        finish_wallet(r, "payment_declined")
+
+def wallet_settle(r: Run, tx: str):
+    try:
+        resp = x402_post("/wallet/settled", {"jobId": r.job_id, "txHash": tx}, timeout=300)
+        body = resp.json()
+    except Exception as e:
+        r.step("settle", "failed", "Your payment was submitted, but ClientScope could not confirm it on chain yet. Check it in the explorer.", tx=tx)
+        finish_wallet(r, "error", f"Could not confirm the payment ({type(e).__name__})"); return
+    if resp.status_code == 200:
+        r.result["payment_tx"] = tx; r.result["payment"] = body.get("payment")
+        if (body.get("anchor") or {}).get("tx_hash"): r.result["anchor_tx"] = body["anchor"]["tx_hash"]
+        if r.steps["settle"]["status"] != "done":
+            r.step("settle", "done", "Approved in your wallet after delivery and finalized on chain: 1 EUDemo to ClientScope, fee paid by the sponsor", tx=tx)
+        for k, ok in ((body.get("payment") or {}).get("checks") or {}).items():
+            r.step("settle", item={"ok": bool(ok), "text": k.replace("_", " ").capitalize()})
+        finish_wallet(r, "delivered_paid")
+    else:
+        bad = ", ".join(k.replace("_", " ") for k, ok in (body.get("checks") or {}).items() if not ok)
+        r.step("settle", "failed", f"The submitted transaction does not match the payment ClientScope asked for{': ' + bad if bad else ''}.", tx=tx)
+        finish_wallet(r, "error", "Payment did not match the request")
+
+class WalletStartReq(BaseModel):
+    account: str
+class WalletVerifyReq(BaseModel):
+    run_id: str
+    signature: dict
+class WalletPayReq(BaseModel):
+    run_id: str
+    tx_hash: str
+class WalletStopReq(BaseModel):
+    run_id: str
+    reason: str = "declined"
+
 # ---------------------------------------------------------------- live badge status
 _BADGE = {"at": 0, "data": None}
 
@@ -450,7 +599,7 @@ def agent():
 
 @app.get("/api/modes")
 def modes():
-    return [{"id": k, "label": v[1]} for k, v in MODES.items()]
+    return [{"id": k, "label": v[1]} for k, v in MODES.items() if k != "wallet"]
 
 @app.get("/api/balances")
 def balances():
@@ -464,7 +613,7 @@ class HireReq(BaseModel):
 @app.post("/api/hire")
 def hire(req: HireReq):
     global CURRENT
-    if req.mode not in MODES: raise HTTPException(400, "unknown mode")
+    if req.mode not in MODES or req.mode == "wallet": raise HTTPException(400, "unknown mode")
     if not SERVER["ready"]: raise HTTPException(503, "job server is still starting")
     if not HIRE_LOCK.acquire(blocking=False):
         raise HTTPException(409, "a hire is already running, try again in a moment")
@@ -472,13 +621,200 @@ def hire(req: HireReq):
     threading.Thread(target=run_hire, args=(r,), daemon=True).start()
     return {"run_id": r.id}
 
+@app.post("/api/wallet/start")
+def wallet_start(req: WalletStartReq):
+    global CURRENT
+    if not ADDR_RE.match(req.account or ""): raise HTTPException(400, "that is not a Concordium account address")
+    if not SERVER["ready"]: raise HTTPException(503, "job server is still starting")
+    if not HIRE_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "a hire is already running, try again in a moment")
+    r = Run("wallet"); r.account = req.account; RUNS[r.id] = r; CURRENT = r
+    try:
+        r.job_id = f"CS-{datetime.datetime.now(datetime.timezone.utc):%Y%m%d}-{uuid.uuid4().hex[:6].upper()}"
+        r.step("badge", "running", "Checking ClientScope's badge with the Concordium Agent Registry")
+        b = badge_status()
+        for ok, text in ((b["badge_valid"], f"Badge valid: {b['checks_passed']}/{b['checks_total']} registry checks"),
+                         (b["hash_match"], "Agent Card hash matches the one on chain"), (b["status"] == "Active", f"On-chain status: {b['status']}")):
+            r.step("badge", item={"ok": bool(ok), "text": text})
+        if not b["verified"]:
+            r.step("badge", "failed", "The agent's badge is not valid, so the hire was stopped. Nothing was asked of your wallet.")
+            threading.Thread(target=finish_wallet, args=(r, "agent_refused"), daemon=True).start()
+            return {"run_id": r.id, "job_id": r.job_id, "refused": True}
+        summary = f"Verified by Concordium: {b['checks_passed']}/{b['checks_total']} registry checks, card hash matches the chain"
+        r.result["badge_summary"] = summary; r.step("badge", "done", summary)
+        r.wallet_audit_rows = [
+            [utc_row(), "client_badge_check", f"by=client browser (ClientScope dashboard) badge_valid=true checks={b['checks_passed']}/{b['checks_total']} token={b['token_address']} agent=#{b['token_id']} network={b['network']}"],
+            [utc_row(), "card_hash_verified", f"sha256={b['card_hash']} matches on-chain metadata_hash"],
+            [utc_row(), "job_requested", f"job_id={r.job_id} by account {r.account} through the Concordium Browser Wallet"],
+        ]
+        c = x402_post("/wallet/challenge", {"account": r.account, "jobId": r.job_id})
+        if c.status_code != 200: raise RuntimeError(f"challenge refused ({c.status_code})")
+        c = c.json(); r.nonce = c["nonce"]
+        r.step("buyer", "running", "Waiting for you to sign ClientScope's one-time challenge and the order in your wallet")
+        threading.Thread(target=_sign_watchdog, args=(r,), daemon=True).start()
+        return {"run_id": r.id, "job_id": r.job_id, "message": c["message"], "expires": c["expires"]}
+    except HTTPException: raise
+    except Exception as e:
+        threading.Thread(target=finish_wallet, args=(r, "error", f"Could not start the hire ({type(e).__name__})"), daemon=True).start()
+        raise HTTPException(502, "could not start the hire, please try again")
+
+@app.post("/api/wallet/verify")
+def wallet_verify(req: WalletVerifyReq):
+    r = wallet_run(req.run_id, "sign")
+    try:
+        resp = x402_post("/wallet/verify", {"account": r.account, "jobId": r.job_id, "nonce": r.nonce, "signature": req.signature}, timeout=90)
+        v = resp.json()
+    except Exception as e:
+        r.step("buyer", "failed", "ClientScope could not check your signature: the chain node did not answer.")
+        threading.Thread(target=finish_wallet, args=(r, "error", type(e).__name__), daemon=True).start()
+        raise HTTPException(502, "could not check the signature, please try again")
+    for k, ok in (v.get("checks") or {}).items():
+        r.step("buyer", item={"ok": bool(ok), "text": CHECK_LABELS.get(k, k)})
+    if not v.get("verified"):
+        failed = v.get("failed") or []
+        why = ("The signature does not match the account's on-chain keys" if "challenge_signed" in failed and "account_exists" not in failed else
+               "The account is not on the EUDemo allow list" if failed == ["eudemo_allow_listed"] else
+               "The buyer is not a registered agent on Concordium's Agent Registry" if failed and "buyer_agent_registered" in failed else
+               "The buyer's key does not control the registered agent it claims" if failed == ["buyer_agent_controlled_by_signer"] else
+               "The account holds less than 1 EUDemo" if failed == ["has_funds"] else
+               "Failed: " + ", ".join(CHECK_LABELS.get(f, f).lower() for f in failed))
+        r.step("buyer", "failed", "Not verified, so nothing was asked of your wallet. " + why)
+        threading.Thread(target=finish_wallet, args=(r, "buyer_rejected"), daemon=True).start()
+        return {"verified": False, "failed": failed}
+    f = v.get("facts") or {}
+    r.session = v.get("session")
+    ip = (f.get("identity_provider") or {}).get("name")
+    r.step("buyer", "done", f"Verified: your signature, identity-backed account{f' ({ip})' if ip else ''}, EUDemo allow list, balance {f.get('eudemo_balance')} EUDemo")
+    r.step("hold", "done", "You signed the order in your wallet: 1 EUDemo, paid only after the delivery check passes. Nothing has been paid.")
+    threading.Thread(target=run_wallet_job, args=(r,), daemon=True).start()
+    return {"verified": True}
+
+@app.post("/api/wallet/pay")
+def wallet_pay(req: WalletPayReq):
+    r = wallet_run(req.run_id, "pay")
+    if not TX_RE.match(req.tx_hash or ""): raise HTTPException(400, "that is not a transaction hash")
+    r.awaiting = False
+    with r.lock: r.result.pop("payment_request", None); r.result["payment_submitted"] = req.tx_hash.lower(); r.bump()
+    r.step("settle", "running", "Your wallet submitted the payment. Waiting for the chain to finalize it, then ClientScope checks it", tx=req.tx_hash.lower())
+    threading.Thread(target=wallet_settle, args=(r, req.tx_hash.lower()), daemon=True).start()
+    return {"ok": True}
+
+@app.post("/api/wallet/stop")
+def wallet_stop(req: WalletStopReq):
+    """The wallet popup was closed or rejected: before verification this cancels the hire; after delivery it declines the payment."""
+    r = wallet_run(req.run_id)
+    if r.awaiting:
+        r.awaiting = False
+        def decline():
+            try: x402_post("/wallet/declined", {"jobId": r.job_id, "reason": "declined"}, timeout=180)
+            except Exception: pass
+            r.step("settle", "skipped", "Not charged. You did not approve the payment in your wallet.", protected=True)
+            finish_wallet(r, "payment_declined")
+        threading.Thread(target=decline, daemon=True).start()
+        return {"ok": True, "stopped": "payment"}
+    if r.steps["buyer"]["status"] == "running":
+        r.step("buyer", "failed", "The signature request was closed in your wallet, so the hire was cancelled. Nothing was paid.")
+        threading.Thread(target=finish_wallet, args=(r, "cancelled"), daemon=True).start()
+        return {"ok": True, "stopped": "hire"}
+    raise HTTPException(409, "this hire can no longer be stopped")
+
+# ---------------------------------------------------------------- custom job requests (draft plans, nothing runs)
+CUSTOM_FILE = RUN_DIR / "custom-jobs.json"
+CUSTOM_LOCK = threading.Lock()
+LLM_ENV_NAMES = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY")   # names only; none is set today
+
+class CustomJobReq(BaseModel):
+    task: str
+    sources: str = ""
+    deliverable: str = "sheet"
+    frequency: str = "once"
+    budget: float | None = None
+
+def _source_kind(u: str):
+    l = u.lower()
+    if "docs.google.com/spreadsheets" in l: return "sheet", "Google Sheet"
+    if l.endswith(".csv") or ".csv?" in l: return "file", "CSV file"
+    if l.endswith(".pdf") or ".pdf?" in l: return "file", "PDF document"
+    if any(x in l for x in ("/rss", "/feed", ".xml")): return "feed", "news or RSS feed"
+    if any(x in l for x in ("amazon.", "ebay.", "etsy.", "shopify", "/product", "/shop", "/store")): return "store", "online shop page"
+    return "web", "web page"
+
+FIELD_HINTS = [(r"\bprice|cost|£|€|\$", "prices"), (r"\bstock|availability|in stock|inventory", "stock levels"),
+               (r"\breview|rating|stars?\b", "reviews and ratings"), (r"\bemail|contact|phone|lead", "contact details"),
+               (r"\bnews|article|headline|post", "headlines and links"), (r"\bjob|vacanc|hiring", "job listings"),
+               (r"\binvoice|receipt|bill", "invoice lines"), (r"\bevent|date|deadline", "dates and events")]
+
+def build_custom_plan(q: CustomJobReq):
+    urls = [u.strip() for u in re.split(r"[\s,]+", q.sources or "") if re.match(r"^https?://\S+\.\S+", u.strip())][:20]
+    kinds = [_source_kind(u) for u in urls]
+    fields = [label for pat, label in FIELD_HINTS if re.search(pat, q.task, re.I)] or ["the details described in your request"]
+    deliver = {"sheet": ("A new Google Sheet with one row per item and an Audit Log tab", 1.0),
+               "email": ("An email summary of what was found, with the full data attached as a sheet", 1.5),
+               "csv": ("A CSV file with one row per item, plus the Audit Log", 1.0)}[q.deliverable]
+    n = max(1, len(urls))
+    per_run = deliver[1] + 0.5 * (n - 1) + (0.5 if any(k[0] in ("file", "feed") for k in kinds) else 0)
+    per_run = round(per_run * 2) / 2
+    def and_join(xs): xs = list(xs); return xs[0] if len(xs) == 1 else ", ".join(xs[:-1]) + " and " + xs[-1]
+    counts = {}
+    for k in kinds: counts[k[1]] = counts.get(k[1], 0) + 1
+    src_line = and_join([f"{c} {name}s" if c > 1 else f"1 {name}" for name, c in counts.items()]) if urls else "the sources you name (to be agreed)"
+    steps = [
+        {"title": "Verify each other", "text": "ClientScope's badge is checked on Concordium, and you sign a one-time challenge from your wallet."},
+        {"title": f"Read {n} source{'s' if n > 1 else ''}", "text": f"Collect {and_join(fields)} from {src_line}."},
+        {"title": "Tidy and structure the data", "text": "One row per item, with the source link and the time it was read."},
+        {"title": "Deliver", "text": deliver[0] + "."},
+        {"title": "Check the delivery", "text": "Every rule under “What done means” is checked automatically before any payment is asked for."},
+        {"title": "Get paid and anchor the receipt", "text": "You approve the payment in your wallet, then the log's fingerprint is stored on Concordium."},
+    ]
+    if q.frequency != "once":
+        steps.append({"title": f"Repeat {q.frequency}", "text": f"The same job runs again {'every day' if q.frequency == 'daily' else 'every week'}. Each run is checked and paid on its own."})
+    rules = [f"Every listed source was read ({n} of {n})" if urls else "Every agreed source was read",
+             "At least one item was found, and no row has an empty required field",
+             "The number of rows matches the number of items found on the sources",
+             "Each row records its source link and the time it was read",
+             "An Audit Log of every step is included and its fingerprint is anchored on Concordium"]
+    if q.deliverable == "email": rules.insert(3, "The summary email reached the address you confirm, and lists every source")
+    if q.deliverable == "csv": rules.insert(3, "The CSV file opens and has the agreed column headings")
+    if q.frequency != "once": rules.append(f"Each {q.frequency} run finishes on its scheduled day")
+    plan = {"label": "Draft plan", "generated_by": "template", "summary": q.task.strip()[:280], "sources": [{"url": u, "kind": k[1]} for u, k in zip(urls, kinds)],
+            "collect": fields, "steps": steps, "done_rules": rules, "deliverable": deliver[0], "frequency": q.frequency,
+            "estimate": {"amount": per_run, "unit": "EUDemo", "per": "run" if q.frequency != "once" else "job",
+                         "note": "Estimate only. ClientScope confirms a fixed price before anything runs."}}
+    if q.budget is not None and q.budget < per_run:
+        plan["budget_note"] = f"Your budget of {q.budget:g} EUDemo is below this estimate, so ClientScope may suggest a smaller scope."
+    return plan
+
+@app.post("/api/custom-jobs")
+def custom_job(q: CustomJobReq):
+    q.task = (q.task or "").strip()
+    if len(q.task) < 15: raise HTTPException(400, "please describe the job in a sentence or two")
+    if len(q.task) > 2000 or len(q.sources or "") > 3000: raise HTTPException(400, "that request is too long")
+    if q.deliverable not in ("sheet", "email", "csv"): raise HTTPException(400, "unknown deliverable")
+    if q.frequency not in ("once", "daily", "weekly"): raise HTTPException(400, "unknown frequency")
+    if q.budget is not None and not (0 < q.budget <= 10000): raise HTTPException(400, "budget must be a positive number")
+    rec = {"id": uuid.uuid4().hex[:10], "created": now_iso(), "status": "waiting_confirmation",
+           "request": q.model_dump(), "plan": build_custom_plan(q)}
+    with CUSTOM_LOCK:
+        try: data = json.loads(CUSTOM_FILE.read_text())
+        except Exception: data = []
+        data.append(rec); CUSTOM_FILE.write_text(json.dumps(data[-500:], indent=1))
+    return rec
+
+@app.get("/api/custom-jobs/{cid}")
+def custom_job_get(cid: str):
+    try: data = json.loads(CUSTOM_FILE.read_text())
+    except Exception: data = []
+    for rec in data:
+        if rec["id"] == cid: return rec
+    raise HTTPException(404)
+
 def load_run(rid: str):
     if rid in RUNS: return RUNS[rid]
     f = RUN_DIR / f"run-{rid}.json"
     if re.fullmatch(r"[0-9a-f]{10}", rid) and f.exists():
         d = json.loads(f.read_text()); r = Run(d["mode"]); r.id = rid
         for k in ("status", "outcome", "started", "finished", "job_id", "audit", "audit_source", "console", "result"): setattr(r, k, d[k])
-        r.steps = {s["key"]: s for s in d["steps"]}; r.version = d["version"]; RUNS[rid] = r
+        r.steps = {s["key"]: s for s in d["steps"]}; r.version = d["version"]; r.account = d.get("account"); RUNS[rid] = r
         return r
     return None
 

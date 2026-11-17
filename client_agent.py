@@ -60,10 +60,16 @@ def main():
                     help="Tamper with the downloaded Agent Card locally to show the refusal path (nothing on-chain changes).")
     ap.add_argument("--simulate-delivery-fail", action="store_true",
                     help="Send ClientScope a broken supplier URL so the job fails its delivery check (buyer must not be charged).")
-    ap.add_argument("--simulate-unverified-buyer", nargs="?", const="impostor", choices=["impostor", "not-allowlisted"],
+    ap.add_argument("--simulate-unverified-buyer", nargs="?", const="impostor", choices=["impostor", "not-allowlisted", "unregistered", "stolen-card"],
                     help="Test the buyer check: 'impostor' signs with a fresh random key while claiming our account; "
-                         "'not-allowlisted' uses a real identity-backed account that is not on the EUDemo allow list. "
+                         "'not-allowlisted' uses a real identity-backed account that is not on the EUDemo allow list; "
+                         "'unregistered' is the real buyer account and key but presents no registered agent; "
+                         "'stolen-card' presents ClientScope's own registered agent #1010, which the buyer does not control. "
                          "ClientScope must refuse before any payment.")
+    ap.add_argument("--simulate-fake-supplier", nargs="?", const="wrong-key", choices=["wrong-key", "replay"],
+                    help="Test the supplier handshake: an impostor that copies ClientScope's real Agent Card answers the handshake, "
+                         "either signing with the wrong key ('wrong-key') or replaying a genuine ClientScope signature captured earlier ('replay'). "
+                         "The buyer must refuse before any payment.")
     ap.add_argument("--direct", action="store_true",
                     help="Legacy: run the job without the x402 payment step.")
     args = ap.parse_args()
@@ -80,9 +86,15 @@ def main():
              "card_url": CARD_URL, "simulate_bad": args.simulate_bad}
     reasons = []
 
-    # Step 1 - fetch the Agent Card and hash it ourselves
+    # Step 1 - fetch the Agent Card from the URI pinned on chain, and hash it ourselves
     say("\n[1/8] Fetching ClientScope's Agent Card")
-    card_bytes = requests.get(CARD_URL, timeout=20).content
+    card_url = CARD_URL
+    try:
+        card_url = requests.get(f"{REGISTRY}/v1/check-badge/{TOKEN_ADDRESS}", params={"network": NETWORK}, timeout=30).json()["on_chain"]["agent_uri"] or CARD_URL
+    except Exception:
+        pass
+    trust["card_url"] = card_url
+    card_bytes = requests.get(card_url, timeout=20).content
     if args.simulate_bad:
         card_bytes = card_bytes.replace(b'"scrape-to-sheet"', b'"scrape-to-sheet-and-email-the-data-elsewhere"')
     card = json.loads(card_bytes)
@@ -132,18 +144,45 @@ def main():
     say(f"      {OK if own_match else BAD} My own hash check: {'MATCH' if own_match else 'MISMATCH'}")
     trust["own_hash_check"] = {"on_chain_hash": chain_hash, "computed": my_hash, "match": own_match}
 
-    # Step 4 - hiring policy
-    say("\n[4/8] Applying hiring policy")
+    # Step 4 - live handshake: ClientScope must prove it controls agent #1010 by signing MY fresh nonce, then the hiring policy
+    say("\n[4/8] Handshake: ClientScope signs my fresh nonce, then I apply my hiring policy")
+    job_id = f"CS-{datetime.datetime.now(datetime.timezone.utc):%Y%m%d}-{uuid.uuid4().hex[:6].upper()}"
+    here = os.path.dirname(os.path.abspath(__file__))
+    port = os.environ.get("CLIENTSCOPE_X402_PORT", "4021")
+    supplier_base = f"http://127.0.0.1:{port}"
+    fake = None
+    if args.simulate_fake_supplier:
+        say(f"      MODE: --simulate-fake-supplier {args.simulate_fake_supplier} (an impostor with ClientScope's copied card answers)")
+        fenv = dict(os.environ, CLIENTSCOPE_FAKE_MODE=args.simulate_fake_supplier, CLIENTSCOPE_FAKE_PORT="4031")
+        if args.simulate_fake_supplier == "replay":  # the impostor captured a genuine ClientScope handshake meant for someone else
+            cap = requests.post(supplier_base + "/agent/handshake", json={"nonce": uuid.uuid4().hex, "jobId": "CS-EAVESDROPPED", "fromAgent": "1211"}, timeout=20).json()
+            cap_path = os.path.join(here, "build-log", "gap2", "captured-genuine-handshake.json")
+            os.makedirs(os.path.dirname(cap_path), exist_ok=True)
+            json.dump(cap, open(cap_path, "w"), indent=1)
+            fenv["CLIENTSCOPE_FAKE_REPLAY"] = cap_path
+        fake = subprocess.Popen(["node", os.path.join(here, "x402", "fake_supplier.mjs")], cwd=os.path.join(here, "x402"), env=fenv, stdout=subprocess.PIPE, text=True)
+        fake.stdout.readline()  # wait until it listens
+        supplier_base = "http://127.0.0.1:4031"
+    p = subprocess.run(["node", os.path.join(here, "x402", "verify_supplier.mjs"), supplier_base, job_id], cwd=os.path.join(here, "x402"), capture_output=True, text=True)
+    if fake: fake.terminate()
+    hs = None
+    for line in p.stdout.splitlines():
+        if line.startswith("RESULT "): hs = json.loads(line[7:])
+        else: say(line, 0.1)
+    trust["supplier_handshake"] = hs
+    hs_ok = bool(hs and hs.get("ok"))
     policy = {
         "badge_valid": cb.get("badge_valid") is True,
         "card_hash_matches_chain": own_match and vr.get("match") is True,
         "agent_active": on_chain.get("status") == "Active" and card.get("active") is True,
         "has_required_skill": REQUIRED_SKILL in skills,
+        "supplier_handshake": hs_ok,
     }
     labels = {"badge_valid": "Concordium badge is valid",
               "card_hash_matches_chain": "Agent Card matches the on-chain hash",
               "agent_active": "Agent is active on-chain",
-              "has_required_skill": f"Agent offers the '{REQUIRED_SKILL}' skill"}
+              "has_required_skill": f"Agent offers the '{REQUIRED_SKILL}' skill",
+              "supplier_handshake": f"Agent proved it controls registered agent #{TOKEN_ID} (signed my fresh nonce)"}
     for k, v in policy.items():
         say(f"      {OK if v else BAD} {labels[k]}")
         if not v: reasons.append(labels[k] + ": FAILED")
@@ -170,9 +209,11 @@ def main():
          f"by=client-agent badge_valid=true checks={passed}/{len(checks)} token={TOKEN_ADDRESS} agent=#{TOKEN_ID} network={NETWORK}"],
         [now(), "card_hash_verified",
          f"sha256={my_hash} matches on-chain metadata_hash (REST match=true, MCP match={vm.get('match') if vm else 'n/a'})"],
+        [now(), "supplier_handshake_verified",
+         f"by=client-agent #{hs['my_agent']}: ClientScope agent #{hs['supplier_agent']} signed my fresh nonce {hs['handshake']['nonce']} for job {job_id}; "
+         f"signer={hs['handshake']['signer']} ({hs['handshake']['via']} of agent #{hs['supplier_agent']}, checked on chain), signature matches its on-chain keys"],
         [now(), "hire_approved", f"policy passed: {', '.join(policy)}"],
     ]
-    job_id = f"CS-{datetime.datetime.now(datetime.timezone.utc):%Y%m%d}-{uuid.uuid4().hex[:6].upper()}"
     if args.direct:
         say("\n>> --direct: handing the job to ClientScope without payment (legacy demo)")
         import agent_job
