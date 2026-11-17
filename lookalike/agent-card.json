@@ -1,0 +1,57 @@
+{
+  "type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+  "name": "Northgate Supplies",
+  "description": "DEMO LOOKALIKE (not the real supplier). A real CIS-8004 badge that copies Northgate Supplies' name and claims its website, used to show ClientScope's domain proof refusing a supplier whose website, account and badge do not all point to each other.",
+  "url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/lookalike/agent-card.json",
+  "version": "1.0.0",
+  "provider": {
+    "organization": "Northgate Supplies",
+    "url": "https://henry-n41.github.io/clientscope-supplier-demo/"
+  },
+  "capabilities": {
+    "extensions": [
+      {
+        "uri": "https://docs.concordium.com/a2a-extensions/concordium-badge/v1",
+        "description": "Verified by Concordium badge — on-chain agent identity in a CIS-8004 registry",
+        "required": false,
+        "params": {
+          "tokenAddress": "ccd:4221332d34e1694168c2a0c0b3fd0f27/cis-2:JyP9XmtPTMTvZKfVnprk4",
+          "owner": {
+            "account": "ccd:4221332d34e1694168c2a0c0b3fd0f27:3N9s8YUN2pxMuP5bszXUUk9vZ3ks7tDgxgzhG5arGr5qGYe6fn"
+          },
+          "agentWallet": "ccd:4221332d34e1694168c2a0c0b3fd0f27:4j6RhVCWEG3GDQcwcgSQRxu7nmXSC4V834YrsVtudomCG6ueMH",
+          "contracts": {
+            "cis8004": "ccd:4221332d34e1694168c2a0c0b3fd0f27:12802.0",
+            "cis8": "ccd:4221332d34e1694168c2a0c0b3fd0f27:12801.0"
+          },
+          "verify": "Resolve tokenAddress via CIS-8004 agent_of; confirm owner + status=Active + card SHA-256 == metadata_hash.",
+          "verification": {
+            "service": "Concordium Agent Registry",
+            "verifyUrl": "https://agent-registry-mcp.concordium.com/v1/badge-check/JyP9XmtPTMTvZKfVnprk4",
+            "mcp": "https://agent-registry-mcp.concordium.com/mcp",
+            "docs": "https://docs.concordium.com/en/mainnet/technical-reference/agent-registry/concordium-badge.html"
+          }
+        }
+      }
+    ]
+  },
+  "role": "supplier",
+  "skills": [
+    {
+      "id": "price-list",
+      "name": "Trade price list",
+      "description": "Publishes a trade price list.",
+      "tags": [
+        "supplier"
+      ]
+    }
+  ],
+  "active": true,
+  "x402Support": true,
+  "registrations": [
+    {
+      "agentId": 1230,
+      "agentRegistry": "ccd:4221332d34e1694168c2a0c0b3fd0f27:12802.0"
+    }
+  ]
+}
