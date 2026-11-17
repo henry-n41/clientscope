@@ -1,0 +1,164 @@
+{
+ "agents": [
+  {
+   "token_id": "1212",
+   "token_address": "JyP9XSBigtVDd5PUUBxpm",
+   "throwaway": true,
+   "card_url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/demo/killswitch-1212.json",
+   "card_sha256": "8555cfb2b5c014b663a68c79239e1b80294a3220e23c0c01850238e39304ca77",
+   "register_tx": "4591a6543aaa55bb8d0bff596da916912366d9329ebf0c0f4ea8bc6248969499",
+   "set_uri_tx": "3eb9f9d0a8b81d30bf69a5cea4ab142b2b656fb8faa0b7fbd414c3fb647ba181",
+   "created": "2026-11-17T08:59:05.255Z"
+  },
+  {
+   "token_id": "1213",
+   "token_address": "JyP9XTHCcuz9TCdEivjxV",
+   "throwaway": true,
+   "card_url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/demo/killswitch-1213.json",
+   "card_sha256": "e55750889611ae74947a9ff1ec331d81aa432f2fa128832e7c22f497e5914b51",
+   "register_tx": "540f22c7ff97007992e3ae1854e5f7c407409e210c441b08cea03116ba9b11c1",
+   "set_uri_tx": "afbeb08f1c4749854157ad647953c89fd49d53d177542536a78b7f296fbdecb4",
+   "created": "2026-11-17T08:59:25.228Z"
+  },
+  {
+   "token_id": "1214",
+   "token_address": "JyP9XUNgYwV5HKrz7Wio1",
+   "throwaway": true,
+   "card_url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/demo/killswitch-1214.json",
+   "card_sha256": "6218d52f0238c6567d4711d463c1a07dde7124380a3cb09f58f4921438041fa9",
+   "register_tx": "8b18e9fc5e3737b9886c019371fb254f4f87a4e560dace41e61e889528790ce8",
+   "set_uri_tx": "20ba976804986dcf08fe248ae08878a05f3ad9cb0aa032affc7b07155ca5eb49",
+   "created": "2026-11-17T08:59:39.216Z"
+  },
+  {
+   "token_id": "1215",
+   "token_address": "JyP9XVUAUxz17T6kzC7uo",
+   "throwaway": true,
+   "card_url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/demo/killswitch-1215.json",
+   "card_sha256": "dc75d7c2386489555b16c1ac590b868691d284562639e79faec72933ed80a689",
+   "register_tx": "c310518f287e5f8255625cdef3fb6f4b8f1807bcb371273fb7c1163deec7fb5c",
+   "set_uri_tx": "979006ebf87575cf0451f2595a7f4b9bde27c5a9b98433ae9542c64ab80ce72a",
+   "created": "2026-11-17T08:59:53.274Z"
+  },
+  {
+   "token_id": "1216",
+   "token_address": "JyP9XWZeQzUvwaLYdyigu",
+   "throwaway": true,
+   "card_url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/demo/killswitch-1216.json",
+   "card_sha256": "a1a914ec7b23f60c483d0fff5ccc6bc09f446ca1b8ac4db1103fb2a94f78226f",
+   "register_tx": "ab8ab5fb1d75391ddac24caf43a635d4ca13fad6190656f8007151cc5f062592",
+   "set_uri_tx": "6804a0aa37210cdf4684c9863a3641d922cc9d2595729b9378946be1536eb36b",
+   "created": "2026-11-17T09:00:07.174Z"
+  },
+  {
+   "token_id": "1217",
+   "token_address": "JyP9XXf8M1yrmhaMXWzH3",
+   "throwaway": true,
+   "card_url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/demo/killswitch-1217.json",
+   "card_sha256": "9c9b4916a0e2bcab2c882d79ae5de3afffffb14a1aaac961420bce71b095d2df",
+   "register_tx": "9211d4b19e1e23b623cab4c626e628fb2c5da3d525c2394bc15b89568cc1171f",
+   "set_uri_tx": "9f7e2208e26b0d2e70ab03cddd4b29a0f0650ee7dec83f06958eee8b6c5985b7",
+   "created": "2026-11-17T09:00:21.334Z"
+  },
+  {
+   "token_id": "1218",
+   "token_address": "JyP9XYkcH3UnbppB9Nd9J",
+   "throwaway": true,
+   "card_url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/demo/killswitch-1218.json",
+   "card_sha256": "98af4a461c963041f0bd287e516a42aaac2bb3703c7107ee3374be942d62fce0",
+   "register_tx": "168623ece7d4577ae5d700e06b74787d700302b4a7811422288ce0aa2fa1ac68",
+   "set_uri_tx": "f330a10baf03b2beae398f85e58a8695946fcc63ca2189b6158613b5e07ed5ea",
+   "created": "2026-11-17T09:00:35.186Z"
+  },
+  {
+   "token_id": "1219",
+   "token_address": "JyP9XZr6D4yiRx3y9jfuM",
+   "throwaway": true,
+   "card_url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/demo/killswitch-1219.json",
+   "card_sha256": "66d29717dc7df906b19fb6c4b82b6f5fc39f935b67ec39278334b67caec2c48d",
+   "register_tx": "fa9d04da6e01f98e6f41be7552bf4d8629cb0a4d1602388d0797ae59e578f91f",
+   "set_uri_tx": "0fe889820503a16ec948263dc533f2c49ee8afc5e037fa99d6c3f419ec40cc92",
+   "created": "2026-11-17T09:00:49.264Z"
+  },
+  {
+   "token_id": "1220",
+   "token_address": "JyP9Xawa96UeG5HhY6Hz2",
+   "throwaway": true,
+   "card_url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/demo/killswitch-1220.json",
+   "card_sha256": "d4e0426072c645f8bb235c5af1862abd769525895d362dfbb19cce6c09db155d",
+   "register_tx": "d4ed713ec290aa303d50a44e8d3d87771e1c26feed604dd510f679888e08ad41",
+   "set_uri_tx": "ee6dd4c03c82800e2a9d90b89dec419f7b28b96ed67dd3e0b07c9c2bbee7ef2c",
+   "created": "2026-11-17T09:23:33.203Z"
+  },
+  {
+   "token_id": "1221",
+   "token_address": "JyP9Xc3457ya6CXTKbjNG",
+   "throwaway": true,
+   "card_url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/demo/killswitch-1221.json",
+   "card_sha256": "f545a4cd17e0a391f1d293b7b396dc2dc1f281fa4ae955b048ec5c357125c8af",
+   "register_tx": "05ffbc55c8c137a8b70658cbcfc6174ce6bf381d77eb0bbafd5b330584d103ed",
+   "set_uri_tx": "0128339a9168e30df06269a6d57b689c8372afb38274730efdc58054e9311812",
+   "created": "2026-11-17T09:23:47.269Z"
+  },
+  {
+   "token_id": "1222",
+   "token_address": "JyP9Xd8Y19UVvKmKpBH3M",
+   "throwaway": true,
+   "card_url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/demo/killswitch-1222.json",
+   "card_sha256": "401130d551beb7f493a649539fa14f4eb24ec9584ffbbc65dd55c5f154ba1eb5",
+   "register_tx": "d1906b13ffecacedb3ec87fd5262ad9683a0c539d98b6fdf5c74aed361c8863b",
+   "set_uri_tx": "11f51d04c72e9614468db30e070aaa5fd6de847ec829872de54e410276d1ff5a",
+   "created": "2026-11-17T09:23:59.658Z"
+  },
+  {
+   "token_id": "1223",
+   "token_address": "JyP9XeE1wAyRkT16JX5PS",
+   "throwaway": true,
+   "card_url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/demo/killswitch-1223.json",
+   "card_sha256": "ef48638092b7972abc4173ca90fb53597554181d7f57ec239d36aa36d4cbcc28",
+   "register_tx": "66524cf322eb6ad3694f5c4f3d06ba51483e314dfdd60146ff98fcef860a46cc",
+   "set_uri_tx": "64558554d86b19b7a77402971c63f2990e71bb9dfc5035d90136179278bb2cf4",
+   "created": "2026-11-17T09:24:15.359Z"
+  },
+  {
+   "token_id": "1225",
+   "token_address": "JyP9XgQyoDyHQhUauGxsg",
+   "throwaway": true,
+   "card_url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/demo/killswitch-1225.json",
+   "card_sha256": "448c9387698e070a8914754dc642d09a0d0f872bd10956bfaaa7fee74aba81f5",
+   "register_tx": "cc31ed74e0aa31c02e73a36fcc02939a97ded405f9fc4080be3ef4a5b0ed5d0d",
+   "set_uri_tx": "45399a6e9970cc5472ef9569fcafcc5fcb650b726a3c509f99b51f8f0de0222e",
+   "created": "2026-11-17T09:24:29.326Z"
+  },
+  {
+   "token_id": "1226",
+   "token_address": "JyP9XhWTjFUDEpiQDWuR8",
+   "throwaway": true,
+   "card_url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/demo/killswitch-1226.json",
+   "card_sha256": "8b376c4be5d34ed95a30c74f072735146fc2282be3535eb9704aa8bb21cbfd45",
+   "register_tx": "2f51b7dca03058798c89d61c6b7010d681cb495ebae290b77a0d2bb5a5c7f93c",
+   "set_uri_tx": "59cafe02daf528220ae0236fd20a9f84f057e3caf9a7272f8ac21d96b98cbe01",
+   "created": "2026-11-17T09:24:43.338Z"
+  },
+  {
+   "token_id": "1228",
+   "token_address": "JyP9XjhRbJU4u5BxmUVab",
+   "throwaway": true,
+   "card_url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/demo/killswitch-1228.json",
+   "card_sha256": "9411a6722c26fb0868239d1c3b872bd373fd1b9ef7aaff5b3bfdb82780c4a067",
+   "register_tx": "b9e78419251818ffda591a11a5fa080908a36caca21537577b8b2648c7837582",
+   "set_uri_tx": "69bddc148a9cf3591085dba9b839a6a540051342a058806ce47d7694338cbd8e",
+   "created": "2026-11-17T09:24:57.250Z"
+  },
+  {
+   "token_id": "1229",
+   "token_address": "JyP9XknuXKxzjCRhn8Loc",
+   "throwaway": true,
+   "card_url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/demo/killswitch-1229.json",
+   "card_sha256": "3448bc7d7ffb0aa77159a481625cd6076ddef7ee97d5f14db9506fa7789380a5",
+   "register_tx": "1ffd5dfe000fd7d78129d3eda8784290a8c1fcb5139e3d06a602ff4570d67d27",
+   "set_uri_tx": "3723aff55f4d5aa808446b828954b6e3bdedec215aa4185d034abdee842eefb1",
+   "created": "2026-11-17T09:25:11.322Z"
+  }
+ ]
+}

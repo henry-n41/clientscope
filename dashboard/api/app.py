@@ -68,6 +68,7 @@ MODES = {
     "bad_card": (["--simulate-bad"], "Tampered Agent Card"),
     "unregistered_buyer": (["--simulate-unverified-buyer", "unregistered"], "Buyer is not a registered agent"),
     "fake_supplier": (["--simulate-fake-supplier", "wrong-key"], "Fake ClientScope with a copied card"),
+    "kill_switch": (["--simulate-kill-switch"], "Live kill switch: the buyer's owner revokes its agent mid-job"),
     "wallet": ([], "Your Concordium wallet"),     # Feature 6: not a client_agent.py mode; driven by /api/wallet/*
 }
 
@@ -188,6 +189,16 @@ def on_server_line(r: Run, line: str):
     elif msg.startswith("anchoring FAILED"):
         r.step("anchor", "running", "The chain node did not answer, retrying the anchor")
         r.result["anchor_retry_needed"] = True
+    elif msg.startswith("KILL SWITCH: buyer agent"):
+        m = re.search(r"revoke tx ([0-9a-f]{64})", msg); d = re.search(r"detected ([0-9.]+) s", msg)
+        if m: r.result["revoke_tx"] = m.group(1); r.result["revoke_tx_url"] = EXPLORER + m.group(1)
+        if d: r.result["detection_seconds"] = d.group(1)
+        r.result["kill_detected"] = True
+        live = next((k for k in ("sheet", "scrape") if r.steps[k]["status"] == "running"), "sheet")
+        r.step(live, "failed", f"HALTED: the buyer agent was revoked on chain, ClientScope saw it {d.group(1) if d else '?'} s after the revoke's block and stopped the job")
+    elif msg.startswith("job HALTED"):
+        r.step("delivery", "skipped", "Not checked: the job was halted by the kill switch")
+        r.step("settle", "skipped", "Not charged. A revoked agent's payment is never settled: the signed payment was discarded.", protected=True)
     elif msg.startswith("job crashed"):
         r.step("scrape", "failed", "The job crashed. Payment discarded, buyer not charged.")
 
@@ -221,6 +232,8 @@ def on_audit_row(r: Run, row):
     elif action == "sheet_created":
         r.result["sheet_url"] = detail
         r.step("sheet", "running", "Sheet created, writing rows", url=detail)
+    elif action == "row_written":
+        r.step("sheet", "running", "Writing product " + detail.split(":")[0].replace("row ", ""))
     elif action == "rows_written":
         r.step("sheet", "running", detail.replace("rows to Products tab", "product rows written, adding the Audit Log tab"))
     elif action == "job_finished":
@@ -260,6 +273,21 @@ def on_agent_line(r: Run, raw: str):
     text = s.lstrip("\u2705\u274c ").strip()
     cur = next((k for k in ("badge", "buyer", "hold") if r.steps[k]["status"] == "running"), None)
 
+    if s.startswith("MODE: --simulate-kill-switch"):
+        m = re.search(r"agent #(\d+) \((\w+)\)", s)
+        if m: r.result["kill_agent"] = {"token_id": m.group(1), "token_address": m.group(2)}; r.result["kill_state"] = "waiting"; r.bump()
+    elif s.startswith("OWNER:"):
+        if " is running; revoking agent" in s:
+            m = re.search(r"in (\d+)s", s)
+            r.result["kill_state"] = "ready"; r.result["kill_ready_at"] = now_iso(); r.result["kill_auto_s"] = int(m.group(1)) if m else None; r.bump()
+        elif "KILL SWITCH PRESSED" in s:
+            r.result["kill_state"] = "sent"; r.result["kill_by"] = "button" if "by=button" in s else "auto"; r.bump()
+        elif "revoke finalized" in s:
+            m = re.search(r"tx ([0-9a-f]{64})", s); f = re.search(r"in ([0-9.]+)s", s)
+            if m: r.result["revoke_tx"] = m.group(1); r.result["revoke_tx_url"] = EXPLORER + m.group(1)
+            if f: r.result["revoke_finalized_s"] = f.group(1)
+            r.result["kill_state"] = "revoked"; r.bump()
+        return
     if s.startswith("[1/8]"):
         r.step("badge", "running", "Fetching the Agent Card and asking the Concordium Agent Registry")
     elif s.startswith("[5/8]"):
@@ -325,7 +353,8 @@ def run_hire(r: Run):
     try:
         # Same client_agent.main(), only without its terminal pauses (they exist for screen recordings of the CLI).
         runner = "import sys, client_agent as c; c.say = lambda m='', pause=0: print(m, flush=True); c.main()"
-        p = subprocess.Popen([PY, "-u", "-c", runner, *args], cwd=str(ROOT), env=dict(os.environ),
+        env = dict(os.environ, CLIENTSCOPE_KILL_AUTO=os.environ.get("CLIENTSCOPE_KILL_AUTO_DASHBOARD", "10"))
+        p = subprocess.Popen([PY, "-u", "-c", runner, *args], cwd=str(ROOT), env=env,
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, start_new_session=True)
         def watchdog():   # the testnet gRPC calls have no timeout of their own; stop a run that has gone silent
             while p.poll() is None:
@@ -400,6 +429,13 @@ def finish(r: Run, code: int):
     elif code == 7:
         r.status, r.outcome = "failed", "buyer_rejected"; r.result["charged"] = False
         pending_to_skipped("Not run: the buyer was refused before any payment")
+    elif code == 8:
+        r.status, r.outcome = "failed", "halted_revoked"; r.result["charged"] = False
+        _POOL_CACHE["at"] = 0
+        pending_to_skipped("Not run: the job was halted by the kill switch")
+    elif code == 9:
+        r.status, r.outcome = "failed", "error"; r.result["error_detail"] = "No throwaway kill-switch demo agent is left, so the demo cannot run"
+        pending_to_skipped("Not run")
     elif code == 2:
         r.status, r.outcome = "failed", "agent_refused"; r.result["charged"] = False
         pending_to_skipped("Not run: the buyer agent refused to hire")
@@ -410,7 +446,13 @@ def finish(r: Run, code: int):
         b = r.result.get("balances")
         if b:
             bb, ba = b["before"]["client"], b["after"]["client"]
-            r.result["charged"] = not (bb["eudemoAtomic"] == ba["eudemoAtomic"] and bb["ccdMicro"] == ba["ccdMicro"])
+            if r.outcome == "halted_revoked":   # the buyer account is also the agent's owner: its only CCD change is its own revoke fee
+                x = (trust.get("x402") or {})
+                fee = int(round(float(x.get("revoke_fee_ccd") or 0) * 1e6))
+                r.result["charged"] = not (bb["eudemoAtomic"] == ba["eudemoAtomic"] and int(bb["ccdMicro"]) - int(ba["ccdMicro"]) == fee)
+                r.result["revoke_fee_ccd"] = x.get("revoke_fee_ccd")
+            else:
+                r.result["charged"] = not (bb["eudemoAtomic"] == ba["eudemoAtomic"] and bb["ccdMicro"] == ba["ccdMicro"])
     r.bump()
 
 
@@ -621,6 +663,29 @@ def hire(req: HireReq):
     r = Run(req.mode); RUNS[r.id] = r; CURRENT = r
     threading.Thread(target=run_hire, args=(r,), daemon=True).start()
     return {"run_id": r.id}
+
+@app.post("/api/runs/{rid}/kill")
+def press_kill_switch(rid: str):
+    """The owner's kill switch button: signals the armed owner process of THIS kill-switch run to revoke now.
+    It can only ever revoke the throwaway demo agent that run is using (x402/killswitch.mjs refuses anything else)."""
+    r = RUNS.get(rid)
+    if not r or r.mode != "kill_switch" or r.status != "running" or not r.job_id: raise HTTPException(409, "no kill-switch job is running")
+    if not re.fullmatch(r"CS-[0-9A-Za-z-]{1,40}", r.job_id): raise HTTPException(400)
+    Path(f"/tmp/clientscope-kill-{r.job_id}").write_text(now_iso())
+    with r.lock: r.result["kill_button_at"] = now_iso(); r.bump()
+    return {"ok": True}
+
+_POOL_CACHE = {"at": 0, "data": None}
+@app.get("/api/killswitch")
+def killswitch_pool():
+    if time.time() - _POOL_CACHE["at"] > 60 or _POOL_CACHE["data"] is None:
+        p = subprocess.run(["node", "killswitch.mjs", "pool"], cwd=str(ROOT / "x402"), capture_output=True, text=True, timeout=90)
+        try:
+            d = json.loads(p.stdout)
+            _POOL_CACHE.update(at=time.time(), data={"active": d["active"], "agents": [{k: a.get(k) for k in ("token_id", "token_address", "status")} for a in d["agents"]]})
+        except Exception:
+            raise HTTPException(502, "chain read failed")
+    return _POOL_CACHE["data"]
 
 @app.post("/api/wallet/start")
 def wallet_start(req: WalletStartReq):

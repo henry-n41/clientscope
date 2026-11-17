@@ -74,6 +74,23 @@ def main():
         check(sv.get("credential_type") == "normal" and sv.get("identity_provider") == bv.get("facts", {}).get("identity_provider", {}).get("id"),
               f"identity-backed credential from identity provider {sv.get('identity_provider')}", "buyer credential differs from receipt")
         check(bv.get("verified") is True and rec.get("job_id") in (bv.get("challenge") or ""), "challenge was for this job and the buyer policy passed", "buyer policy did not pass for this job")
+    halt = rec.get("halt")
+    if halt:
+        print(f"\n[6] Kill switch: buyer agent #{halt.get('token_id')} revoked mid-job (re-checked on chain)")
+        rv = {}
+        if halt.get("revoke_tx"):
+            p = __import__("subprocess").run(["node", os.path.join(os.path.dirname(os.path.abspath(__file__)), "x402", "killswitch.mjs"), "verify-revoke",
+                                              halt["revoke_tx"], str(halt.get("token_id"))], capture_output=True, text=True, cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), "x402"))
+            try: rv = json.loads(p.stdout.strip().splitlines()[-1])
+            except Exception: rv = {}
+        c = rv.get("checks") or {}
+        check(bool(halt.get("revoke_tx")) and c.get("finalized") and c.get("succeeded"), f"revoke tx {str(halt.get('revoke_tx'))[:16]}... is finalized and succeeded", "revoke tx not found on chain")
+        check(c.get("is_registry_revoke_for_token"), f"it is a CIS-8004 revoke of agent #{halt.get('token_id')} on the registry 12802,0", "tx is not a registry revoke of this agent")
+        check(c.get("agent_now_revoked"), f"agent #{halt.get('token_id')} is Revoked on chain now", "agent is not revoked on chain")
+        check(rv.get("revoked_at") == halt.get("revoked_at"), f"revoke time in the receipt matches the block ({halt.get('revoked_at')})", "revoke time differs from the chain")
+        check(not pay.get("tx_hash") and pay.get("status") == "not_taken", "no payment was taken for the halted job", "a halted job has a payment")
+        check(any(len(r) > 2 and r[1] == "kill_switch_revoked" and str(halt.get("revoke_tx")) in r[2] for r in covered),
+              "the anchored Audit Log names the revoke tx", "Audit Log has no kill_switch_revoked row for this tx")
     print()
     if reasons:
         print("TAMPERED"); [print(f"  - {r}") for r in reasons]; return 1

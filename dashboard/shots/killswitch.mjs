@@ -1,0 +1,28 @@
+// Live kill switch, through the real dashboard: start the hire, press the red button mid-job, capture each stage.
+import { chromium } from "playwright-core";
+const OUT = "/workspace/clientscope/build-log/killswitch/";
+const BASE = process.env.BASE || "http://127.0.0.1:8000/";
+const TAG = process.env.TAG || "local";
+const b = await chromium.launch({ executablePath: "/usr/bin/google-chrome", args: ["--no-sandbox"] });
+const p = await b.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 2 });
+await p.goto(BASE, { waitUntil: "networkidle" });
+await p.waitForSelector("text=Job server online", { timeout: 120000 });
+await p.click("button:has-text('Demo buyer')");
+await p.click("button:has-text('Kill switch')");
+await p.waitForTimeout(2500);
+await (await p.$("main section")).screenshot({ path: OUT + `dash-${TAG}-1-intro.png` });
+await p.click("button:has-text('Hire ClientScope')");
+const btn = await p.waitForSelector("[data-kill-button] >> visible=true", { timeout: 180000 });
+await p.waitForTimeout(1200);
+await p.screenshot({ path: OUT + `dash-${TAG}-2-armed.png` });
+await btn.click();
+console.log("pressed at", new Date().toISOString());
+await p.waitForSelector("text=Owner revoked the badge on chain >> visible=true", { timeout: 90000 });
+await p.waitForSelector("text=ClientScope saw it >> visible=true", { timeout: 90000 });
+await p.screenshot({ path: OUT + `dash-${TAG}-3-halted.png` });
+await p.waitForSelector("main[data-run-status=finished]", { timeout: 180000 });
+await p.waitForTimeout(2500);
+await p.screenshot({ path: OUT + `dash-${TAG}-4-result.png` });
+await p.screenshot({ path: OUT + `dash-${TAG}-5-full.png`, fullPage: true });
+console.log("outcome", await p.$eval("main", (m) => m.dataset.runOutcome), "url", p.url());
+await b.close();

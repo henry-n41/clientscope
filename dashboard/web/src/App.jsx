@@ -4,6 +4,7 @@ import {
   ArrowUpRight, BadgeCheck, Bot, Check, ChevronDown, CircleCheck, FileSpreadsheet, FlaskConical, HandCoins, Link2,
   LoaderCircle, Lock, Minus, Receipt, RotateCw, ScrollText, ShieldAlert, ShieldCheck, ShieldX, Sparkles, Store,
   Terminal, UserCheck, X, Zap, Wallet, Mail, FileText, PenLine, LineChart, PackageSearch, CalendarClock,
+  Power, OctagonX, Siren, Globe, Undo2, ShieldOff,
 } from "lucide-react";
 import { INSTALL_URL, useWallet } from "./wallet.js";
 
@@ -40,6 +41,7 @@ const MODE_COPY = {
   bad_card: "The agent's ID card has been tampered with",
   unregistered_buyer: "A real, approved buyer account with no registered agent",
   fake_supplier: "A fake ClientScope copies the real ID card but has the wrong key",
+  kill_switch: "Live kill switch: the buyer's owner revokes its agent in the middle of the job",
 };
 
 const short = (s, a = 8, b = 6) => (s && s.length > a + b + 1 ? `${s.slice(0, a)}…${s.slice(-b)}` : s || "");
@@ -223,8 +225,10 @@ function WalletPanel({ wallet, onConnect, connecting, onUseDemo }) {
 
 function SupplierJob({ agent, agentErr, agentLoading, onRefresh, modes, mode, setMode, payWith, setPayWith, wallet, onConnect, connecting,
   onHire, onHireWallet, busy, starting, serverReady, err, prompt }) {
-  const failModes = modes.filter((m) => m.id !== "normal");
-  const isFail = mode !== "normal";
+  const failModes = modes.filter((m) => m.id !== "normal" && m.id !== "kill_switch");
+  const hasKill = modes.some((m) => m.id === "kill_switch");
+  const isKill = mode === "kill_switch";
+  const isFail = mode !== "normal" && !isKill;
   const agentOk = agent?.verified || (payWith === "demo" && mode === "bad_card");
   const walletReady = wallet.status === "connected" && wallet.testnet;
   const disabled = busy || starting || !serverReady || !agentOk || (payWith === "wallet" && !walletReady);
@@ -274,8 +278,8 @@ function SupplierJob({ agent, agentErr, agentLoading, onRefresh, modes, mode, se
             <motion.div key="d" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.25 }}
               className="rounded-2xl bg-black/20 p-4 ring-1 ring-white/[.06]">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <Segmented id="scenario" value={isFail ? "fail" : "normal"} onChange={(v) => setMode(v === "normal" ? "normal" : isFail ? mode : "delivery_fail")}
-                  options={[["normal", "Real hire", Zap], ["fail", "Simulate a failure", FlaskConical]]} />
+                <Segmented id="scenario" value={isKill ? "kill" : isFail ? "fail" : "normal"} onChange={(v) => setMode(v === "normal" ? "normal" : v === "kill" ? "kill_switch" : isFail ? mode : "delivery_fail")}
+                  options={[["normal", "Real hire", Zap], ["fail", "Simulate a failure", FlaskConical], ...(hasKill ? [["kill", "Kill switch", Power]] : [])]} />
                 <AnimatePresence initial={false}>
                   {isFail && (
                     <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} className="relative sm:min-w-[300px]">
@@ -288,6 +292,7 @@ function SupplierJob({ agent, agentErr, agentLoading, onRefresh, modes, mode, se
                   )}
                 </AnimatePresence>
               </div>
+              {isKill && <KillSwitchIntro />}
               <p className="mt-3 flex items-start gap-1.5 text-[12px] leading-relaxed text-zinc-500"><Bot className="mt-0.5 h-3.5 w-3.5 shrink-0" />No wallet needed. A demo buyer account signs on ClientScope's server, so you can see the whole flow. Testnet only, no real money.</p>
             </motion.div>
           )}
@@ -303,6 +308,7 @@ function SupplierJob({ agent, agentErr, agentLoading, onRefresh, modes, mode, se
           {!serverReady ? "Starting the job server…"
             : !agentOk ? "Waiting for a valid badge check"
             : payWith === "wallet" ? (walletReady ? "You sign once to confirm the order, and approve the payment only after the delivery check passes." : wallet.status === "connected" ? "Switch your wallet to Testnet to continue." : wallet.status === "missing" ? "Install the wallet, or try with a demo buyer." : "Connect your wallet to hire.")
+            : isKill ? "Press the red button while the rows are being written. Nothing will be charged."
             : isFail ? "Demo of a failure. Nothing will be charged." : "The payment is held, and only released after the delivery check passes."}
         </p>
         <AnimatePresence>
@@ -672,6 +678,7 @@ const OUTCOME_TITLE = {
   error: "Something went wrong, and nothing was charged",
   payment_declined: "Delivered, but the payment was not approved",
   cancelled: "Hire cancelled, so nothing was charged",
+  halted_revoked: "Kill switch pressed: the job stopped and nothing was charged",
 };
 
 function Progress({ run, elapsed }) {
@@ -738,10 +745,75 @@ function ApproveCard({ run, wallet, onApprove, onDecline, state }) {
   );
 }
 
+function KillSwitchIntro() {
+  const [pool, setPool] = useState(null);
+  useEffect(() => { fetch(`${API}/api/killswitch`).then((r) => (r.ok ? r.json() : null)).then(setPool).catch(() => {}); }, []);
+  return (
+    <div className="mt-3 rounded-xl bg-rose-500/[.07] p-3 text-[12.5px] leading-relaxed text-zinc-300 ring-1 ring-rose-400/20">
+      <div className="flex items-start gap-2"><Siren className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" />
+        <span>The buyer hires ClientScope with a throwaway agent that is really registered on Concordium. While the job runs, its owner revokes the agent on chain, with your button or a timer. ClientScope must notice within seconds, stop, take no money and anchor a halt receipt.
+          {pool && <span className="text-zinc-500"> {pool.active} demo agents left.</span>}</span>
+      </div>
+    </div>
+  );
+}
+
+/* LIVE KILL SWITCH: the buyer agent's owner revokes its on-chain badge while the job runs. */
+function KillSwitchCard({ run }) {
+  const r = run.result || {};
+  const [now, setNow] = useState(Date.now());
+  const [pressing, setPressing] = useState(false);
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 250); return () => clearInterval(t); }, []);
+  if (run.mode !== "kill_switch") return null;
+  const running = run.status === "running";
+  const st = r.kill_state || "waiting";
+  const left = st === "ready" && r.kill_ready_at && r.kill_auto_s ? Math.max(0, Math.ceil(r.kill_auto_s - (now - new Date(r.kill_ready_at)) / 1000)) : null;
+  const press = async () => { setPressing(true); try { await fetch(`${API}/api/runs/${run.id}/kill`, { method: "POST" }); } catch {} };
+  const halted = run.outcome === "halted_revoked" || r.kill_detected;
+  const Row = ({ ok, active, children }) => (
+    <div className={`flex items-start gap-2 text-[12.5px] ${ok ? "text-zinc-200" : active ? "text-zinc-300" : "text-zinc-600"}`}>
+      {ok ? <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" /> : active ? <Spin c="mt-0.5 h-4 w-4 shrink-0 text-rose-300" /> : <Minus className="mt-0.5 h-4 w-4 shrink-0" />}
+      <span>{children}</span>
+    </div>
+  );
+  return (
+    <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} data-killswitch={st}
+      className={`card overflow-hidden rounded-3xl ${halted ? "!border-emerald-400/30" : "!border-rose-400/40"}`}>
+      <div className="bg-gradient-to-br from-rose-500/20 via-transparent to-transparent px-5 py-5">
+        <div className="flex items-start gap-3">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-rose-500 text-white shadow-[0_0_24px_-4px_rgba(244,63,94,.9)]"><Power className="h-5 w-5" /></div>
+          <div className="min-w-0">
+            <h3 className="text-[15.5px] font-semibold tracking-tight text-white">Owner's kill switch</h3>
+            <p className="mt-1 text-[12.5px] leading-relaxed text-zinc-400">
+              This hire uses a throwaway demo agent{r.kill_agent ? <> <span className="font-mono text-zinc-300">#{r.kill_agent.token_id}</span></> : ""}, a real agent on Concordium's registry. Its owner can revoke it at any moment. ClientScope watches the badge every second.
+            </p>
+          </div>
+        </div>
+        {running && st === "ready" && (
+          <button onClick={press} disabled={pressing} data-kill-button
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-rose-500 px-4 py-3 text-[14px] font-semibold text-white shadow-[0_0_30px_-6px_rgba(244,63,94,.9)] transition hover:bg-rose-400 disabled:opacity-60">
+            {pressing ? <><Spin c="h-4 w-4" /> Sending the revoke…</> : <><OctagonX className="h-4 w-4" /> Revoke the agent's badge now{left !== null ? ` · auto in ${left}s` : ""}</>}
+          </button>
+        )}
+        <div className="mt-4 space-y-2 rounded-xl bg-black/25 p-3 ring-1 ring-white/[.06]">
+          <Row ok={["ready", "sent", "revoked"].includes(st) || halted} active={st === "waiting" && running}>Job running, kill switch armed</Row>
+          <Row ok={st === "revoked" || halted} active={st === "sent"}>
+            {r.revoke_tx ? <>Owner revoked the badge on chain{r.revoke_finalized_s ? ` (final in ${r.revoke_finalized_s} s)` : ""}{r.kill_by ? `, by ${r.kill_by === "button" ? "your button" : "the auto timer"}` : ""}</> : "Owner sends the CIS-8004 revoke"}
+          </Row>
+          <Row ok={halted} active={st === "revoked" && !halted}>{halted ? `ClientScope saw it ${r.detection_seconds || "?"} s after the revoke's block and halted the job` : "ClientScope detects the revoke and halts"}</Row>
+          <Row ok={run.outcome === "halted_revoked"} active={halted && running}>{run.outcome === "halted_revoked" ? "Payment never sent, halt receipt anchored on chain" : "Payment discarded, halt receipt anchored"}</Row>
+        </div>
+        {r.revoke_tx_url && <div className="mt-3"><LinkTile icon={ShieldOff} label="Revoke transaction on Concordium" value={short(r.revoke_tx, 10, 8)} href={r.revoke_tx_url} mono /></div>}
+      </div>
+    </motion.section>
+  );
+}
+
 function Side({ run, elapsed, approve }) {
   const done = run.status !== "running";
   return (
     <div className="flex flex-col gap-5">
+      <KillSwitchCard run={run} />
       {approve && <ApproveCard run={run} {...approve} />}
       {done && <Result run={run} />}
       <Progress run={run} elapsed={elapsed} />
@@ -789,6 +861,8 @@ function Result({ run }) {
       : "The Sheet passed the delivery check, so the 1 EUDemo payment was released. The log's fingerprint is now stored on Concordium.")
     : run.outcome === "delivery_failed"
       ? "The signed payment was thrown away and never sent. The failure is still logged and its fingerprint stored on chain."
+      : run.outcome === "halted_revoked"
+      ? `The owner revoked the buyer agent's badge mid-job. ClientScope saw it on chain ${r.detection_seconds || "?"} s after the revoke's block, stopped the job, threw the signed payment away and anchored a halt receipt that names the revoke transaction.`
       : run.outcome === "payment_declined"
       ? "The work passed its checks, but the payment was not approved in your wallet, so nothing was sent. This is recorded in the Audit Log and anchored on chain."
       : run.outcome === "cancelled"
@@ -812,22 +886,24 @@ function Result({ run }) {
         </div>
         <div className="mt-3 flex flex-wrap gap-1.5">
           {ok ? <Pill tone="green">Paid 1.00 EUDemo · no fee for you</Pill>
+            : run.outcome === "halted_revoked" ? <Pill tone="amber">Charged 0 EUDemo · owner paid {r.revoke_fee_ccd ? Number(r.revoke_fee_ccd).toFixed(2) : "?"} CCD to revoke</Pill>
             : <Pill tone="amber">{bal || run.outcome !== "error" ? "Charged 0 EUDemo · 0 CCD" : "Nothing sent"}</Pill>}
           {r.receipt_verified && <Pill tone="violet"><BadgeCheck className="h-3 w-3" /> Receipt checked: valid</Pill>}
         </div>
       </div>
-      {(r.sheet_url || r.payment_tx || r.anchor_tx) && (
+      {(r.sheet_url || r.payment_tx || r.anchor_tx || r.revoke_tx) && (
         <div className="space-y-2 border-t border-white/[.06] px-5 py-4">
           {r.sheet_url && <LinkTile icon={FileSpreadsheet} label={ok ? "Your finished Google Sheet" : "Sheet with the failure log"} value="Open in Google Sheets" href={r.sheet_url} />}
           {r.payment_tx && <LinkTile icon={HandCoins} label="Payment on Concordium" value={short(r.payment_tx, 10, 8)} href={r.payment_tx_url} mono />}
-          {r.anchor_tx && <LinkTile icon={Receipt} label="Receipt stored on Concordium" value={short(r.anchor_tx, 10, 8)} href={r.anchor_tx_url} mono />}
+          {r.revoke_tx && <LinkTile icon={ShieldOff} label="Owner's revoke on Concordium" value={short(r.revoke_tx, 10, 8)} href={r.revoke_tx_url} mono />}
+          {r.anchor_tx && <LinkTile icon={Receipt} label={run.outcome === "halted_revoked" ? "Halt receipt stored on Concordium" : "Receipt stored on Concordium"} value={short(r.anchor_tx, 10, 8)} href={r.anchor_tx_url} mono />}
         </div>
       )}
       {bal && (
         <div className="border-t border-white/[.06] px-5 py-3">
           <div className="text-[10.5px] font-semibold uppercase tracking-[.14em] text-zinc-500">Balances read back from the chain</div>
           <div className="divide-y divide-white/[.05]">
-            <BalanceRow name="Buyer" b={bal.before.client} a={bal.after.client} />
+            <BalanceRow name={run.mode === "kill_switch" ? "Buyer (also the agent's owner, paid the revoke fee)" : "Buyer"} b={bal.before.client} a={bal.after.client} />
             <BalanceRow name="ClientScope" b={bal.before.clientscope} a={bal.after.clientscope} />
             <BalanceRow name="Fee sponsor (ClientScope)" b={bal.before.sponsor} a={bal.after.sponsor} />
           </div>

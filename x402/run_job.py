@@ -13,12 +13,53 @@ import agent_job
 now = lambda: datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 req = json.load(sys.stdin)
 url = req.get("url") or agent_job.URL
-sheet_url, job_error = None, None
+HALT_FILE = req.get("halt_file")   # kill switch: the x402 server writes this file the moment the buyer agent is revoked on chain
+EXPLORER = "https://ccdexplorer.io/testnet/transaction/"
+
+def halt_info():
+    if not HALT_FILE or not os.path.exists(HALT_FILE): return None
+    try: return json.load(open(HALT_FILE))
+    except Exception: return None
+
+def halt_rows(h, stage, rows_done, rows_total):
+    tx = h.get("revoke_tx")
+    return [
+        [now(), "kill_switch_revoked", f"buyer agent #{h.get('token_id')} ({h.get('token_address')}) was REVOKED on chain by its owner "
+                                       f"{h.get('sender') or '?'}: revoke_tx={tx or 'not found'} {EXPLORER + tx if tx else ''} block={h.get('block_height')} at {h.get('revoked_at')}"],
+        [now(), "job_halted", f"ClientScope saw the revoke {h.get('detection_seconds')} s after the revoke's block, finality included (it polls the registry every second) and "
+                              f"stopped the job at stage={stage}: {rows_done} of {rows_total if rows_total is not None else '?'} product rows written, work not delivered"],
+        [now(), "payment_not_taken", "signed payment discarded, never submitted to chain; buyer not charged (a revoked agent's payment is never settled)"],
+    ]
+
+sheet_url, job_error, halted = None, None, None
 try:
     sheet_url = agent_job.run_job(url, extra_audit_rows=req.get("audit_rows") or [],
-                                  client=req.get("client") or agent_job.CLIENT, quiet=True)
+                                  client=req.get("client") or agent_job.CLIENT, quiet=True,
+                                  halt_check=halt_info if HALT_FILE else None, pace_seconds=float(req.get("pace_seconds") or 0))
+except agent_job.Halted as h:
+    halted = h
 except Exception as e:
     job_error = f"{type(e).__name__}: {e}"
+
+if halted:
+    # Stop here: no delivery check, no settlement. Write what happened, so the server can anchor the halt receipt.
+    gc = gspread.authorize(load_credentials())
+    sh = halted.sheet
+    if sh is None:
+        sh = gc.create(f"ClientScope - {req.get('client') or agent_job.CLIENT} - {datetime.date.today()} (halted)")
+        sh.sheet1.update_title("Products"); sh.sheet1.update([["SKU", "Product", "Price (GBP)", "Stock", "Scraped at"]], "A1")
+        halted.audit.append([now(), "sheet_created", sh.url + " (to hold the halt receipt)"])
+    audit = halted.audit + halt_rows(halted.info, halted.stage, halted.rows_done, halted.rows_total)
+    progress = os.environ.get("CLIENTSCOPE_PROGRESS_FILE")
+    if progress:
+        with open(progress, "a") as f:
+            for r in audit[-3:]: f.write(json.dumps({"audit_row": r}) + "\n")
+    al = sh.add_worksheet("Audit Log", rows=max(50, len(audit) + 10), cols=3)
+    al.update([["Time", "Action", "Detail"]] + audit, "A1", value_input_option="RAW")
+    al.format("A1:C1", {"textFormat": {"bold": True}})
+    print(json.dumps({"sheet_url": sh.url, "sheet_id": sh.id, "halted": True, "halt": halted.info, "stage": halted.stage,
+                      "rows_done": halted.rows_done, "rows_total": halted.rows_total, "check": {"halted": True}, "passed": False}))
+    sys.exit(0)
 
 # ---- Delivery check ----
 check = {"job_ran": job_error is None, "job_error": job_error}
@@ -52,6 +93,13 @@ check["gates"] = gates
 summary = (f"sheet={'yes' if check['sheet_exists'] else 'no'} audit_log={'yes' if check['audit_log_present'] else 'no'} "
            f"products={len(prod)} complete={len(complete)} page_rows={page_count}")
 
+late_halt = halt_info()   # revoked after the last row but before the delivery decision: still halt, never settle
+if late_halt and sh and check["audit_log_present"]:
+    rows = halt_rows(late_halt, "after_job_finished", len(prod), page_count)
+    sh.worksheet("Audit Log").append_rows(rows, value_input_option="RAW")
+    print(json.dumps({"sheet_url": sheet_url, "sheet_id": sh.id, "halted": True, "halt": late_halt, "stage": "after_job_finished",
+                      "rows_done": len(prod), "rows_total": page_count, "check": check, "passed": False}))
+    sys.exit(0)
 if sh and check["audit_log_present"]:
     al = sh.worksheet("Audit Log")
     if passed:

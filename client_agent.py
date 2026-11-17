@@ -70,12 +70,29 @@ def main():
                     help="Test the supplier handshake: an impostor that copies ClientScope's real Agent Card answers the handshake, "
                          "either signing with the wrong key ('wrong-key') or replaying a genuine ClientScope signature captured earlier ('replay'). "
                          "The buyer must refuse before any payment.")
+    ap.add_argument("--simulate-kill-switch", action="store_true",
+                    help="LIVE KILL SWITCH: hire as a THROWAWAY demo agent from x402/killswitch_pool.json; once the job is running, its owner "
+                         "revokes the agent on chain (automatically, or when /tmp/clientscope-kill-<job_id> appears). ClientScope must halt, "
+                         "charge nothing, and anchor a halt receipt naming the revoke transaction. Never touches #1010 or #1211.")
     ap.add_argument("--direct", action="store_true",
                     help="Legacy: run the job without the x402 payment step.")
     args = ap.parse_args()
 
+    here0 = os.path.dirname(os.path.abspath(__file__))
+    kill_agent = None
+    if args.simulate_kill_switch:
+        p = subprocess.run(["node", os.path.join(here0, "x402", "killswitch.mjs"), "pick"], cwd=os.path.join(here0, "x402"), capture_output=True, text=True)
+        try: kill_agent = json.loads(p.stdout.strip().splitlines()[-1])
+        except Exception: kill_agent = {"error": p.stderr.strip()[-200:] or "could not read the kill-switch pool"}
+        if kill_agent.get("error") or str(kill_agent.get("token_id")) in ("1010", "1211"):
+            say(f"{BAD} Kill switch demo unavailable: {kill_agent.get('error', 'protected agent')}", 0); sys.exit(9)
+        os.environ["CLIENTSCOPE_BUYER_AGENT_ID"] = str(kill_agent["token_id"])
+        os.environ["CLIENTSCOPE_KILLSWITCH"] = "1"; os.environ["CLIENTSCOPE_DEMO_PACE"] = "1"
     say("=" * 64, 0)
     say("  CLIENT AGENT  -  Northgate Supplies (demo)")
+    if kill_agent:
+        say(f"  MODE: --simulate-kill-switch, acting as THROWAWAY demo agent #{kill_agent['token_id']} ({kill_agent['token_address']})")
+        say(f"        its owner will revoke it on chain while the job is running")
     say("  Task: hire an agent to put the supplier price list in a Google Sheet")
     say("  Rule: only hire an agent with a valid Verified by Concordium badge")
     if args.simulate_bad:
@@ -231,6 +248,26 @@ def main():
         if args.simulate_unverified_buyer:
             env["CLIENTSCOPE_SIMULATE_BUYER"] = args.simulate_unverified_buyer
             say(f"\n  MODE: --simulate-unverified-buyer {args.simulate_unverified_buyer}")
+        arm = None
+        if kill_agent:
+            import threading
+            port = os.environ.get("CLIENTSCOPE_X402_PORT", "4021")
+            auto = os.environ.get("CLIENTSCOPE_KILL_AUTO", "3")
+            trigger = f"/tmp/clientscope-kill-{job_id}"
+            say(f"\n  OWNER: kill switch armed for agent #{kill_agent['token_id']}: revoke {auto}s after the job starts, or when the button is pressed")
+            arm = subprocess.Popen(["node", os.path.join(here, "x402", "killswitch.mjs"), "arm", str(kill_agent["token_id"]), job_id, f"http://127.0.0.1:{port}", auto, trigger],
+                                   cwd=os.path.join(here, "x402"), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+            def pump_arm():
+                for l in arm.stdout:
+                    l = l.rstrip("\n")
+                    if l.startswith("KILLSWITCH_ARMED"): say(f"  OWNER: {l[17:]}", 0)
+                    elif l.startswith("KILLSWITCH_PRESSED"): say(f"  OWNER: KILL SWITCH PRESSED ({l[19:]}): sending CIS-8004 revoke for agent #{kill_agent['token_id']}", 0)
+                    elif l.startswith("KILLSWITCH_REVOKED"):
+                        rv = json.loads(l[19:]); trust["kill_switch"] = rv
+                        say(f"  OWNER: {OK if rv.get('outcome') == 'success' else BAD} revoke finalized in {rv.get('finalized_in_s')}s, tx {rv.get('tx_hash')}", 0)
+                        say(f"         {rv.get('explorer')}", 0)
+                    elif l.strip(): say(f"  OWNER: {l}", 0)
+            threading.Thread(target=pump_arm, daemon=True).start()
         proc = subprocess.Popen(["node", os.path.join(here, "x402", "pay_and_hire.mjs")], cwd=os.path.join(here, "x402"),
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env)
         proc.stdin.write(json.dumps(req)); proc.stdin.close()
@@ -242,6 +279,22 @@ def main():
                 say(line.rstrip("\n"), 0.15)
         proc.wait()
         trust["x402"] = result
+        if arm:
+            try: arm.wait(timeout=60)
+            except Exception: arm.kill()
+            time.sleep(0.3)
+        if result and result.get("halted"):
+            hh = result.get("halt") or {}
+            json.dump(trust, open("trust_check.json", "w"), indent=2)
+            say("\n" + "=" * 64, 0)
+            say(f"  {OK} KILL SWITCH WORKED: job HALTED {hh.get('detection_seconds')} s after the owner's revoke landed on chain. NOT PAID.")
+            say(f"  {OK if result.get('ok') else BAD} buyer charged 0 EUDemo; only CCD spent was the owner's own revoke fee ({result.get('revoke_fee_ccd')} CCD)")
+            say(f"  Revoke tx:    https://ccdexplorer.io/testnet/transaction/{hh.get('revoke_tx')}")
+            if (result.get("anchor") or {}).get("tx_hash"): say(f"  Halt receipt: https://ccdexplorer.io/testnet/transaction/{result['anchor']['tx_hash']}")
+            say(f"  Sheet (halt rows in the Audit Log): {result.get('sheet_url')}")
+            say("=" * 64, 0)
+            if result.get("sheet_url"): verify_anchor(result["sheet_url"])
+            sys.exit(8 if result.get("ok") else 6)
         if result and result.get("buyer_rejected"):
             json.dump(trust, open("trust_check.json", "w"), indent=2)
             say("\n" + "=" * 64, 0)

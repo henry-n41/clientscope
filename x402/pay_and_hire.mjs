@@ -12,6 +12,7 @@ import { signMessage } from "@concordium/web-sdk";
 import { generateKeyPairSync } from "node:crypto";
 import { SPONSOR_ADDRESS, explorerTx } from "./config.mjs";
 import { BUYER_AGENT_ID } from "./agent_trust.mjs";
+import { watchAgent } from "./killswitch.mjs";
 
 // Spend policy (soft cap, enforced in this client before anything is signed)
 const MAX_PER_JOB_ATOMIC = BigInt(process.env.CLIENTSCOPE_MAX_ATOMIC || "2000000"); // refuse anything above 2 EUDemo (env override only for testing the refusal)
@@ -149,11 +150,19 @@ const BUYER_SESSION = v.session;
 
 say(`\n[6/8] Asking ClientScope for the job: POST http://localhost:${PORT}/jobs/scrape  (job ${jobId})`);
 const t0 = Date.now();
+// Kill switch, my side: I watch my OWN badge too. If my owner revokes me, I stop acting for them at once.
+const KILL = !!process.env.CLIENTSCOPE_KILLSWITCH;
+let myHalt = null;
+const stopMyWatch = KILL && myAgent ? watchAgent(grpc(), myAgent, { intervalMs: 1000, onRevoked: (i) => {
+  myHalt = i;
+  say(`      ${OK} KILL SWITCH (my side): my owner revoked me, agent #${myAgent}, on chain (tx ${String(i.revoke_tx || "?").slice(0, 16)}...), I saw it ${i.detection_seconds ?? "?"} s after the revoke's block`);
+  say(`         I stop acting for my owner now. My held payment must never settle: the revoke used my account's next nonce, so it can no longer be submitted at all.`);
+} }) : null;
 let res;
 try {
   res = await payFetch(`http://localhost:${PORT}/jobs/scrape`, {
     method: "POST", headers: { "content-type": "application/json", "x-buyer-session": BUYER_SESSION },
-    body: JSON.stringify({ jobId, url: job.url, client: job.client, audit_rows: job.audit_rows || [] }),
+    body: JSON.stringify({ jobId, url: job.url, client: job.client, audit_rows: job.audit_rows || [], demo_pace: !!process.env.CLIENTSCOPE_DEMO_PACE }),
   });
 } catch (e) {
   say(`      ${BAD} Payment not made: ${e.message}`);
@@ -167,6 +176,32 @@ const sponsorAfter = await balances(chain, SPONSOR_ADDRESS);
 const payToAfter = await balances(chain, CLIENTSCOPE_PAYTO);
 out.balances = { before: { client: before, sponsor: sponsorBefore, clientscope: payToBefore }, after: { client: after, sponsor: sponsorAfter, clientscope: payToAfter } };
 const line = (n, b, a) => say(`      ${n.padEnd(12)} EUDemo ${fmt(b.eudemoAtomic)} -> ${fmt(a.eudemoAtomic)}   CCD ${fmt(b.ccdMicro)} -> ${fmt(a.ccdMicro)}   nonce ${b.nonce} -> ${a.nonce}`);
+stopMyWatch?.();
+if (res.status === 409 && body.status === "halted_agent_revoked") {
+  const hh = body.halt || {};
+  say(`      ${OK} ClientScope HALTED the job: buyer agent #${hh.token_id} was revoked on chain mid-job (HTTP 409)`);
+  say(`         revoke tx:   ${hh.revoke_tx}  (block ${hh.block_height}, ${hh.revoked_at})`);
+  say(`         detected:    ${hh.detection_seconds} s after the revoke's block (finality included); stopped at ${hh.stage} (${hh.rows_done}/${hh.rows_total ?? "?"} rows written)`);
+  say(`         Explorer:    ${explorerTx(hh.revoke_tx)}`);
+  if (body.anchor?.tx_hash) say(`         halt receipt anchored: ${explorerTx(body.anchor.tx_hash)}`);
+  say(`      ${OK} No PAYMENT-RESPONSE: the sponsor never co-signed, nothing was submitted`);
+  say(`\n      On-chain proof (read back from the Concordium node):`);
+  line("client", before, after); line("sponsor", sponsorBefore, sponsorAfter); line("clientscope", payToBefore, payToAfter);
+  // The buyer account is also the agent's owner, so its ONLY transaction is the owner's own revoke (fee paid by the owner).
+  let revokeFee = null, revokeSender = null;
+  try { const st = jsonSafe(await txStatus(chain, hh.revoke_tx)); revokeFee = BigInt(st.outcome.summary.cost); revokeSender = st.outcome.summary.sender; } catch {}
+  const eudemoSame = before.eudemoAtomic === after.eudemoAtomic && payToBefore.eudemoAtomic === payToAfter.eudemoAtomic && sponsorBefore.eudemoAtomic === sponsorAfter.eudemoAtomic;
+  const onlyRevoke = revokeFee !== null && revokeSender === CLIENT_ADDRESS && BigInt(before.ccdMicro) - BigInt(after.ccdMicro) === revokeFee && BigInt(after.nonce) - BigInt(before.nonce) === 1n;
+  const payToSame = payToBefore.ccdMicro === payToAfter.ccdMicro && payToBefore.nonce === payToAfter.nonce;
+  const sponsorOnlyAnchored = BigInt(sponsorAfter.nonce) - BigInt(sponsorBefore.nonce) <= 1n;
+  say(`      ${eudemoSame ? OK : BAD} EUDemo unchanged for buyer, ClientScope and sponsor: buyer charged 0 EUDemo`);
+  say(`      ${onlyRevoke ? OK : BAD} The buyer account's only transaction is the owner's revoke (fee ${revokeFee !== null ? fmt(revokeFee) : "?"} CCD, paid by the owner to press the kill switch), nonce ${before.nonce} -> ${after.nonce}`);
+  say(`      ${payToSame && sponsorOnlyAnchored ? OK : BAD} ClientScope's account unchanged; the sponsor sent at most 1 transaction (the halt receipt anchor)`);
+  const ok = eudemoSame && onlyRevoke && payToSame && sponsorOnlyAnchored;
+  out.ok = ok; out.charged = false; out.halted = true; out.halt = hh; out.sheet_url = body.sheet_url; out.anchor = body.anchor; out.my_side = myHalt;
+  out.revoke_fee_ccd = revokeFee !== null ? fmt(revokeFee) : null;
+  console.log("RESULT " + JSON.stringify(out)); process.exit(ok ? 8 : 6);
+}
 if (res.status === 422) {
   const c = body.check || {};
   say(`      ${BAD} ClientScope answered 422: delivery check FAILED`);

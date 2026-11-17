@@ -46,13 +46,13 @@ def hashes(audit_covered, products):
     return {"log_sha256": sha(canon(audit_covered)), "log_rows": len(audit_covered),
             "products_sha256": sha(canon(clean(products))), "products_rows": max(0, len(clean(products)) - 1)}
 
-def build_receipt(job_id, buyer, payment_tx, delivered, sheet_id, audit_covered, products, buyer_verification=None):
+def build_receipt(job_id, buyer, payment_tx, delivered, sheet_id, audit_covered, products, buyer_verification=None, halt=None):
     h = hashes(audit_covered, products)
     times = [r[0] for r in audit_covered[1:] if r]
     return {
         "type": "ClientScopeJobReceipt", "version": 1, "job_id": job_id, "agent": AGENT,
         "buyer": buyer, "pay_to": PAY_TO, "sheet_id": sheet_id,
-        "delivery": {"result": "delivered" if delivered else "delivery_failed"},
+        "delivery": {"result": "halted_agent_revoked" if halt else "delivered" if delivered else "delivery_failed"},
         "payment": {"tx_hash": payment_tx, "asset": "EUDemo", "amount": "1.000000" if payment_tx else "0",
                     "status": "settled" if payment_tx else "not_taken"},
         "audit_log": {"sha256": h["log_sha256"], "rows_covered": h["log_rows"],
@@ -62,6 +62,10 @@ def build_receipt(job_id, buyer, payment_tx, delivered, sheet_id, audit_covered,
         "anchor": {"chain": "concordium-testnet", "method": "RegisterData CBOR CSJRA v1", "account": ANCHOR_ACCOUNT},
         **({"buyer_verification": {k: buyer_verification.get(k) for k in ("verified", "policy", "checks", "facts", "challenge", "signature", "checked_at")}}
            if buyer_verification else {}),
+        # Kill switch: the buyer agent was revoked on chain mid-job. The revoke transaction is named here (and in the
+        # Audit Log rows this receipt hashes), so anyone can re-check it on chain with verify_receipt.py.
+        **({"halt": {k: halt.get(k) for k in ("reason", "token_id", "token_address", "revoke_tx", "block_hash", "block_height", "revoked_at",
+                                               "detected_at", "detection_seconds", "sender", "stage", "rows_done", "rows_total")}} if halt else {}),
     }
 
 def open_sheet(sheet_id):
@@ -93,7 +97,7 @@ def anchor(req):
     covered, anchor_row, _ = split_audit(al.get_all_values())
     if anchor_row: raise RuntimeError("already anchored")
     products = sh.worksheet("Products").get_all_values()
-    receipt = build_receipt(req["job_id"], req["buyer"], req.get("payment_tx"), req["delivered"], req["sheet_id"], covered, products, req.get("buyer_verification"))
+    receipt = build_receipt(req["job_id"], req["buyer"], req.get("payment_tx"), req["delivered"], req["sheet_id"], covered, products, req.get("buyer_verification"), req.get("halt"))
     rbytes = canon(receipt); rhash = sha(rbytes)
     tx = node(["send"], json.dumps({"receipt_sha256": rhash, "public": {"job": req["job_id"], "agent": 1010,
               "log_sha256": receipt["audit_log"]["sha256"], "result": receipt["delivery"]["result"]}}))

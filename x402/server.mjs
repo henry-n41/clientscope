@@ -16,8 +16,10 @@ import { toConcordiumFacilitatorSigner } from "@x402/concordium";
 import { Cbor, CborMemo } from "@concordium/web-sdk";
 import { grpc, txStatus } from "./chain.mjs";
 import { issueChallenge, verifyBuyer, sessionFor, BUYER_POLICY } from "./buyer_check.mjs";
-import { CLIENTSCOPE_AGENT_ID, signHandshake } from "./agent_trust.mjs";
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { CLIENTSCOPE_AGENT_ID, signHandshake, readAgent } from "./agent_trust.mjs";
+import { watchAgent, inPool } from "./killswitch.mjs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { registerWalletRoutes } from "./wallet_flow.mjs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,10 +63,10 @@ function py(script, input, args = []) {
 }
 
 // Feature 2: hash the finished Audit Log + Products into a receipt and anchor it on Concordium (RegisterData).
-async function anchorJob(job, paymentTx) {
+async function anchorJob(job, paymentTx, halt = null) {
   try {
     log("anchoring receipt: hashing Audit Log + Products, RegisterData from operator account ...");
-    const a = await py("receipt.py", { sheet_id: job.sheetId, job_id: job.jobId, buyer: job.buyer, payment_tx: paymentTx || null, delivered: job.delivered, buyer_verification: job.buyerVerification }, ["anchor"]);
+    const a = await py("receipt.py", { sheet_id: job.sheetId, job_id: job.jobId, buyer: job.buyer, payment_tx: paymentTx || null, delivered: job.delivered, buyer_verification: job.buyerVerification, halt }, ["anchor"]);
     log(`anchored: log_sha256=${a.log_sha256.slice(0, 16)}... (${a.rows_covered} rows) receipt_sha256=${a.receipt_sha256.slice(0, 16)}... tx=${a.anchor.tx_hash} fee=${a.anchor.fee_ccd} CCD`);
     job.anchor = a; return a;
   } catch (e) { log("anchoring FAILED:", e.message); return null; }
@@ -82,6 +84,27 @@ const resourceServer = new x402ResourceServer({
       log("settle refused: job not delivered");
       return { success: false, network: r.network, transaction: "", payer: "", errorReason: "not_delivered" };
     }
+    // Kill switch, last line of defence: re-read the buyer agent on chain right before the sponsor co-signs.
+    let revoked = job.halted;
+    if (!revoked && job.buyerAgentId) {
+      let a = null; try { a = await readAgent(grpc(), job.buyerAgentId); } catch {}
+      revoked = a?.status !== "Active";
+      if (revoked) log(`buyer agent #${job.buyerAgentId} is ${a?.status || "unreadable"} on chain`);
+    }
+    if (revoked) {
+      job.stopWatch?.();
+      log("settle refused: KILL SWITCH, the buyer agent was revoked after delivery and before settlement -> payment never submitted");
+      const hh = job.haltInfo?.() || { reason: "buyer_agent_revoked", token_id: job.buyerAgentId, stage: "before_settlement" };
+      const t = now();
+      const rows = [[t, "kill_switch_revoked", `buyer agent #${job.buyerAgentId} revoked on chain before settlement: revoke_tx=${hh.revoke_tx || "not found"} ${hh.revoke_tx ? explorerTx(hh.revoke_tx) : ""}`],
+        [t, "job_halted", "delivered work withheld from settlement: a revoked agent's payment is never settled"],
+        [t, "payment_not_taken", "signed payment discarded, never submitted to chain; buyer not charged"]];
+      try { await py("append_audit.py", { sheet_id: job.sheetId, rows }); } catch (e) { log("audit append failed:", e.message); }
+      job.delivered = false;
+      await anchorJob(job, null, { ...hh, stage: hh.stage || "before_settlement" });
+      return { success: false, network: r.network, transaction: "", payer: "", errorReason: "buyer_agent_revoked" };
+    }
+    job.stopWatch?.();
     log("delivery passed -> sponsor co-signs, submits, waits for finality ...");
     const t0 = Date.now();
     const s = await facilitator.settle(p, r);
@@ -113,6 +136,9 @@ const resourceServer = new x402ResourceServer({
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
+// Kill switch: a public, read-only job stage so the agent's owner (or the dashboard) knows when the job is running.
+const jobStates = new Map();
+app.get("/jobs/state/:jobId", (req, res) => { const st = jobStates.get(req.params.jobId); res.status(st ? 200 : 404).json(st || { stage: "unknown" }); });
 app.get("/health", (_q, r) => r.json({ ok: true, network: NETWORK, asset: ASSET, price: PRICE_ATOMIC, payTo: CLIENTSCOPE_PAYTO, sponsor: SPONSOR_ADDRESS, flow: "pay-on-delivery", agent: `#${CLIENTSCOPE_AGENT_ID}`, handshake_signer: HANDSHAKE_SIGNER }));
 
 function decodePayment(h) {
@@ -208,14 +234,50 @@ app.post("/jobs/scrape", async (req, res) => {
     [t, "payment_authorized", `signed sponsored payment verified, NOT submitted: payer=${h.sender} nonce=${h.nonce} memo=${req.paymentMemo} expires=${new Date(h.expiry * 1000).toISOString().slice(0, 19).replace("T", " ")} UTC`],
   ];
   log("payment held (verified, not submitted) -> running agent_job.py + delivery check");
+  // KILL SWITCH: while the job runs, watch the buyer agent's status on chain every second. If its owner revokes it,
+  // the job is halted at the next checkpoint, the held payment is never settled, and the halt (naming the revoke tx) is anchored.
+  const jobId = req.body.jobId;
+  const buyerAgentId = b.facts.buyer_agent?.token_id ? String(b.facts.buyer_agent.token_id) : null;
+  const haltFile = join(tmpdir(), `clientscope-halt-${jobId}.json`);
+  rmSync(haltFile, { force: true });
+  let halt = null;
+  const stopWatch = buyerAgentId ? watchAgent(grpc(), buyerAgentId, { intervalMs: 1000, onRevoked: (info) => {
+    halt = { reason: "buyer_agent_revoked", ...info };
+    writeFileSync(haltFile, JSON.stringify(halt));
+    log(`KILL SWITCH: buyer agent #${buyerAgentId} is ${info.status} on chain (revoke tx ${info.revoke_tx || "?"}, block ${info.block_height || "?"}), detected ${info.detection_seconds ?? "?"} s after the revoke's block -> halting job ${jobId}`);
+  } }) : null;
+  // Demo pacing: only for the throwaway kill-switch agents, so a person can watch the rows arrive and press the button.
+  const pace = buyerAgentId && inPool(buyerAgentId) && req.body.demo_pace ? 4 : 0;
+  jobStates.set(jobId, { stage: "running", buyer_agent: buyerAgentId, watching: !!stopWatch, pace_seconds: pace, started: new Date().toISOString() });
   let r;
-  try { r = await py("run_job.py", { url: req.body.url, client: req.body.client, audit_rows: auditRows }); }
-  catch (e) { log("job crashed:", e.message); lockedNonces.delete(req.paymentKey); return res.status(500).json({ job_id: req.body.jobId, status: "job_error", charged: false }); }
+  try { r = await py("run_job.py", { url: req.body.url, client: req.body.client, audit_rows: auditRows, halt_file: buyerAgentId ? haltFile : null, pace_seconds: pace }); }
+  catch (e) { stopWatch?.(); jobStates.set(jobId, { stage: "error" }); log("job crashed:", e.message); lockedNonces.delete(req.paymentKey); return res.status(500).json({ job_id: req.body.jobId, status: "job_error", charged: false }); }
+  if (r.halted) {
+    stopWatch?.();
+    jobStates.set(jobId, { stage: "halted" });
+    const job = { jobId, sheetId: r.sheet_id, sheetUrl: r.sheet_url, delivered: false, halted: true, buyer: h.sender, buyerVerification: req.buyer, buyerAgentId };
+    jobs.set(req.paymentKey, job);
+    log(`job HALTED at ${r.stage} (${r.rows_done}/${r.rows_total ?? "?"} rows) -> signed payment discarded, never submitted (buyer not charged)`);
+    lockedNonces.delete(req.paymentKey);
+    const hh = { ...r.halt, stage: r.stage, rows_done: r.rows_done, rows_total: r.rows_total };
+    let a = null;
+    try {
+      log("anchoring receipt: hashing Audit Log + Products, RegisterData from operator account ...");
+      a = await py("receipt.py", { sheet_id: r.sheet_id, job_id: jobId, buyer: h.sender, payment_tx: null, delivered: false, buyer_verification: req.buyer, halt: hh }, ["anchor"]);
+      log(`anchored: log_sha256=${a.log_sha256.slice(0, 16)}... (${a.rows_covered} rows) receipt_sha256=${a.receipt_sha256.slice(0, 16)}... tx=${a.anchor.tx_hash} fee=${a.anchor.fee_ccd} CCD`);
+    } catch (e) { log("anchoring FAILED:", e.message); }
+    rmSync(haltFile, { force: true });
+    return res.status(409).json({ job_id: jobId, status: "halted_agent_revoked", charged: false, sheet_url: r.sheet_url, halt: hh,
+      anchor: a && { tx_hash: a.anchor.tx_hash, receipt_sha256: a.receipt_sha256, log_sha256: a.log_sha256 } });
+  }
+  jobStates.set(jobId, { stage: "checked" });
   const c = r.check;
   log(`delivery check: sheet=${c.sheet_exists} auditLog=${c.audit_log_present} products=${c.products_rows} complete=${c.products_rows_complete} pageRows=${c.supplier_page_rows} -> ${r.passed ? "PASS" : "FAIL"}`);
-  const job = { jobId: req.body.jobId, sheetId: r.sheet_id, sheetUrl: r.sheet_url, delivered: r.passed, buyer: h.sender, buyerVerification: req.buyer };
+  const job = { jobId: req.body.jobId, sheetId: r.sheet_id, sheetUrl: r.sheet_url, delivered: r.passed, buyer: h.sender, buyerVerification: req.buyer,
+    buyerAgentId, stopWatch, get halted() { return !!halt; }, haltInfo: () => halt };
   jobs.set(req.paymentKey, job);
   if (!r.passed) {
+    stopWatch?.();
     log("delivery FAILED -> signed payment discarded, never submitted (buyer not charged)");
     lockedNonces.delete(req.paymentKey); // the buyer may sign a new payment with the same nonce; the old one is dead
     const a = r.sheet_id ? await anchorJob(job, null) : null;

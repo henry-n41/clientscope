@@ -147,3 +147,27 @@ Test modes: `client_agent.py --simulate-unverified-buyer unregistered|stolen-car
 Findings from testnet (16 Nov 2026), so nobody repeats them: an approved operator can NOT call `setAgentURI` or `revoke` on this
 deployment (reject -7201), only the owner can; `setAgentWallet` needs a PLAIN ed25519 signature over the 162 canonical bytes (the
 signMessage format is rejected) and a deadline no more than about an hour or two ahead (+60 min accepted, +180 min rejected).
+
+
+## Live kill switch: revoke an agent mid-job, the job halts, nobody pays
+
+The owner of a buyer agent can stop it at any moment by revoking its CIS-8004 badge on chain. ClientScope watches the buyer
+agent's on-chain status every second for the whole job (`killswitch.mjs` `watchAgent`, straight `agentOf` reads, no indexer).
+When it flips to Revoked:
+
+1. the job stops at its next checkpoint (between every stage and every product row, `agent_job.py`),
+2. ClientScope finds the revoke transaction itself by scanning the finalized blocks since the last Active reading,
+3. the signed payment is thrown away, never co-signed or submitted. As a second guard, `settle` re-reads the agent right
+   before the sponsor would co-sign. The revoke also uses the owner account's next nonce, so the held payment can never be
+   submitted by anyone,
+4. the Audit Log gets `kill_switch_revoked` (names the revoke tx), `job_halted` (how fast, where it stopped) and
+   `payment_not_taken`, and the receipt (with a `halt` block) is anchored on chain,
+5. `verify_receipt.py` re-checks the revoke tx on chain: finalized, a CIS-8004 revoke of that token on 12802,0, agent Revoked.
+
+The buyer agent watches its own badge too and stops acting for its owner when it is revoked.
+
+Demo: `client_agent.py --simulate-kill-switch`, or the dashboard's "Kill switch" scenario with its red button (auto after 10 s).
+It only ever uses THROWAWAY agents from `killswitch_pool.json` (owned by the demo buyer account). The code refuses to revoke
+#1010 or #1211, any agent outside the pool, any agent not owned by the demo buyer, and any agent already revoked.
+Top up the pool on the box: `node killswitch.mjs provision 8`, then push the cards on the `agent-cards` branch.
+Tests: `node test_killswitch.mjs` (no transactions) and `node test_killswitch.mjs --live` (one real revoke).
