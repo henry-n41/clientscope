@@ -557,9 +557,10 @@ _BADGE = {"at": 0, "data": None}
 
 def badge_status():
     if _BADGE["data"] and time.time() - _BADGE["at"] < 60: return _BADGE["data"]
-    card_bytes = requests.get(CA.CARD_URL, timeout=20).content
-    card = json.loads(card_bytes); my_hash = hashlib.sha256(card_bytes).hexdigest()
     cb = requests.get(f"{CA.REGISTRY}/v1/check-badge/{CA.TOKEN_ADDRESS}", params={"network": CA.NETWORK}, timeout=30).json()
+    card_url = (cb.get("on_chain") or {}).get("agent_uri") or CA.CARD_URL   # the card lives wherever the chain says it does
+    card_bytes = requests.get(card_url, timeout=20).content
+    card = json.loads(card_bytes); my_hash = hashlib.sha256(card_bytes).hexdigest()
     vr = requests.get(f"{CA.REGISTRY}/v1/verify-agent-card/{CA.TOKEN_ADDRESS}", params={"network": CA.NETWORK}, timeout=30).json()
     checks = cb.get("checks", {}); oc = cb.get("on_chain", {})
     chain_hash = vr.get("on_chain_hash_hex") or oc.get("metadata_hash_hex")
@@ -569,7 +570,7 @@ def badge_status():
          "checks_total": len(checks), "status": oc.get("status"), "token_id": CA.TOKEN_ID, "token_address": CA.TOKEN_ADDRESS,
          "owner": oc.get("owner_account"), "owner_url": ACCOUNT_EXPLORER + (oc.get("owner_account") or ""),
          "card_hash": my_hash, "chain_hash": chain_hash, "hash_match": my_hash == chain_hash and vr.get("match") is True,
-         "card_url": CA.CARD_URL, "network": CA.NETWORK, "issues": [i.get("message") for i in cb.get("issues", [])],
+         "card_url": card_url, "network": CA.NETWORK, "issues": [i.get("message") for i in cb.get("issues", [])],
          "price": "1 EUDemo", "flow": "Pay on delivery", "fee": "Sponsored by ClientScope"}
     d["verified"] = d["badge_valid"] and d["hash_match"] and d["status"] == "Active"
     _BADGE.update(at=time.time(), data=d)
