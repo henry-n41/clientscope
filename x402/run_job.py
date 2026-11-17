@@ -49,6 +49,9 @@ if halted:
         sh = gc.create(f"ClientScope - {req.get('client') or agent_job.CLIENT} - {datetime.date.today()} (halted)")
         sh.sheet1.update_title("Products"); sh.sheet1.update([["SKU", "Product", "Price (GBP)", "Stock", "Scraped at"]], "A1")
         halted.audit.append([now(), "sheet_created", sh.url + " (to hold the halt receipt)"])
+    titles = [w.title for w in sh.worksheets()]
+    if "Products" not in titles:   # halted before the Products tab was named: the receipt hashes an empty Products tab
+        ws = sh.sheet1; ws.update_title("Products"); ws.update([["SKU", "Product", "Price (GBP)", "Stock", "Scraped at"]], "A1")
     audit = halted.audit + halt_rows(halted.info, halted.stage, halted.rows_done, halted.rows_total)
     progress = os.environ.get("CLIENTSCOPE_PROGRESS_FILE")
     if progress:

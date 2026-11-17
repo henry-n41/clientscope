@@ -222,6 +222,9 @@ def on_audit_row(r: Run, row):
         if r.audit_source == "live": r.audit.append(row)
         r.bump()
     action, detail = row[1], row[2] if len(row) > 2 else ""
+    if r.result.get("kill_detected") and action in ("sheet_created", "row_written", "rows_written", "job_finished"):
+        if action == "sheet_created": r.result["sheet_url"] = detail.split(" ")[0]
+        return   # the job was already halted: late progress rows must not overwrite the halted step
     if action == "job_started":
         r.step("scrape", "running", "Fetching " + detail.split("url=")[-1])
     elif action == "page_scraped":
