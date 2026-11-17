@@ -69,6 +69,7 @@ MODES = {
     "unregistered_buyer": (["--simulate-unverified-buyer", "unregistered"], "Buyer is not a registered agent"),
     "fake_supplier": (["--simulate-fake-supplier", "wrong-key"], "Fake ClientScope with a copied card"),
     "kill_switch": (["--simulate-kill-switch"], "Live kill switch: the buyer's owner revokes its agent mid-job"),
+    "lookalike_supplier": (["--simulate-lookalike-supplier", "claims-site"], "Lookalike supplier site (domain proof)"),
     "wallet": ([], "Your Concordium wallet"),     # Feature 6: not a client_agent.py mode; driven by /api/wallet/*
 }
 
@@ -139,6 +140,9 @@ def on_server_line(r: Run, line: str):
     msg = re.sub(r"^\[server [0-9:]+\]\s*", "", line)
     with r.lock:
         r.console.append({"src": "clientscope", "line": msg, "at": now_iso()}); r.bump()
+    if msg.startswith("DOMAIN PROOF "):
+        m = re.match(r"DOMAIN PROOF (VERIFIED|REFUSED|UNPROVEN): (\S+)", msg)
+        if m: r.result["domain_verdict"] = m.group(1).lower(); r.result["domain_site"] = m.group(2); r.bump()
     if msg.startswith("buyer VERIFIED"):
         r.step("buyer", item="ClientScope: buyer VERIFIED")
     elif msg.startswith("POST /jobs/scrape") and "-> 402" in msg:
@@ -322,6 +326,13 @@ def on_agent_line(r: Run, raw: str):
         r.step("buyer", "failed", "Rejected before any payment. " + why)
         r.outcome = "buyer_rejected"
         return
+    elif "ClientScope REFUSED the supplier site" in s:
+        r.step("hold", "failed", "Supplier site refused before any 402: its website, Concordium account and badge do not all point to each other. Nothing was signed.")
+        r.outcome = "domain_refused"
+    elif "refusal anchored on Concordium:" in s:
+        m = re.search(r"([0-9a-f]{64})", s)
+        if m: r.result["domain_anchor_tx"] = m.group(1); r.result["domain_anchor_tx_url"] = EXPLORER + m.group(1); r.bump()
+        return
     elif "identity provider #" in s:
         m = re.search(r'identity provider #(\d+) "([^"]+)", credential valid to (\S+), (\d+) attributes', s)
         if m: r.result["buyer_facts"] = f" (identity provider {m.group(2)}, {m.group(4)} private attributes shared)"
@@ -423,7 +434,7 @@ def finish(r: Run, code: int):
         retry_anchor(r)
     for k in ("payment_tx", "anchor_tx"):
         if r.result.get(k): r.result[k + "_url"] = EXPLORER + r.result[k]
-    refresh_audit(r)
+    if code != 10: refresh_audit(r)
     pending_to_skipped = lambda why: [r.step(k, "skipped", why) for k, _, _ in STEPS if r.steps[k]["status"] in ("pending", "running")]
     if code == 0:
         r.status, r.outcome = "succeeded", "delivered_paid"
@@ -436,6 +447,10 @@ def finish(r: Run, code: int):
         r.status, r.outcome = "failed", "halted_revoked"; r.result["charged"] = False
         _POOL_CACHE["at"] = 0
         pending_to_skipped("Not run: the job was halted by the kill switch")
+    elif code == 10:
+        r.status, r.outcome = "failed", "domain_refused"; r.result["charged"] = False
+        r.result["domain"] = x.get("domain")
+        pending_to_skipped("Not run: the supplier site failed its domain proof")
     elif code == 9:
         r.status, r.outcome = "failed", "error"; r.result["error_detail"] = "No throwaway kill-switch demo agent is left, so the demo cannot run"
         pending_to_skipped("Not run")
@@ -677,6 +692,41 @@ def press_kill_switch(rid: str):
     Path(f"/tmp/clientscope-kill-{r.job_id}").write_text(now_iso())
     with r.lock: r.result["kill_button_at"] = now_iso(); r.bump()
     return {"ok": True}
+
+# ---------------------------------------------------------------- DOMAIN PROOF scene: the real supplier next to a lookalike
+DOMAIN_TARGETS = {
+    "real": {"label": "Northgate Supplies (real)", "url": "https://henry-n41.github.io/clientscope-supplier-demo/"},
+    "lookalike": {"label": "\u201cNorthgate Supplies\u201d lookalike", "url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/lookalike/"},
+    "copy": {"label": "Lookalike with a copied proof", "url": "https://raw.githubusercontent.com/henry-n41/clientscope/agent-cards/lookalike-copy/"},
+}
+class DomainCheckReq(BaseModel):
+    target: str = "real"
+    tamper: bool = False
+    anchor: bool = False
+
+@app.get("/api/domain/info")
+def domain_info():
+    try: demo = json.loads((ROOT / "x402" / "domain_demo.json").read_text())
+    except Exception: demo = {}
+    la = demo.get("lookalike") or {}
+    return {"targets": {k: {**v, "proof_url": v["url"] + ".well-known/concordium-agent.json"} for k, v in DOMAIN_TARGETS.items()},
+            "real_agent": {"token_id": "1211", "token_address": "JyP9XR6EkrzHnx9g177u9"},
+            "lookalike_agent": {"token_id": la.get("token_id"), "token_address": la.get("token_address"), "owner": la.get("owner"),
+                                "register_tx_url": EXPLORER + la["register_tx"] if la.get("register_tx") else None}}
+
+@app.post("/api/domain/check")
+def domain_check(q: DomainCheckReq):
+    t = DOMAIN_TARGETS.get(q.target)
+    if not t: raise HTTPException(400, "unknown target")
+    try:
+        resp = x402_post("/supplier/verify", {"url": t["url"], "tamper": bool(q.tamper and q.target == "real"), "require": True, "anchor": q.anchor}, timeout=150)
+    except Exception:
+        raise HTTPException(502, "the job server did not answer")
+    if resp.status_code != 200: raise HTTPException(502, "check failed")
+    d = resp.json()
+    if (d.get("anchor") or {}).get("tx_hash"): d["anchor"]["explorer"] = EXPLORER + d["anchor"]["tx_hash"]
+    d["target"] = q.target; d["label"] = t["label"]
+    return d
 
 _POOL_CACHE = {"at": 0, "data": None}
 @app.get("/api/killswitch")
